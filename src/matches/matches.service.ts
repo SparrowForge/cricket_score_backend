@@ -4,10 +4,16 @@ import { PG_POOL } from '../database/database.module';
 import { LiveStateService } from './live-state.service';
 
 /** Scorecard dismissal line: 'caught Dhoni bowled Jadeja' | 'caught & bowled Jadeja' | 'run out Jadeja' | 'bowled Bumrah' … */
-function dismissalText(w: {
-  wicket_type: string; bowler_id: string; fielder_id: string | null;
-  bowler_name: string; fielder_name: string | null;
-}): string {
+type WicketRow = {
+  dismissed_player_id: string;
+  wicket_type: string;
+  bowler_id: string;
+  fielder_id: string | null;
+  bowler_name: string;
+  fielder_name: string | null;
+};
+
+function dismissalText(w: Pick<WicketRow, 'wicket_type' | 'bowler_id' | 'fielder_id' | 'bowler_name' | 'fielder_name'>): string {
   switch (w.wicket_type) {
     case 'caught':
     case 'caught_behind':
@@ -369,7 +375,7 @@ export class MatchesService {
       ).rows;
       // Dismissals joined separately (not via striker) so a non-striker run out is credited too.
       const wickets = (
-        await this.pool.query(
+        await this.pool.query<WicketRow>(
           `SELECT b.dismissed_player_id, b.wicket_type::text AS wicket_type, b.bowler_id, b.fielder_id,
                   bp.full_name AS bowler_name, fp.full_name AS fielder_name
            FROM balls b
@@ -380,7 +386,7 @@ export class MatchesService {
           [inn.id],
         )
       ).rows;
-      const wicketByBatter = new Map(wickets.map((w) => [w.dismissed_player_id, w]));
+      const wicketByBatter = new Map<string, WicketRow>(wickets.map((w) => [w.dismissed_player_id, w]));
       for (const bat of inn.batting) {
         const w = wicketByBatter.get(bat.id);
         if (w) {
