@@ -1,0 +1,59 @@
+# Render.com blueprint — deploys this backend as the realtime (WebSocket) node.
+# The REST API can stay on Vercel; both share the same Neon Postgres and
+# Upstash Redis, and the Socket.IO gateway here subscribes to the same
+# Redis pub/sub channels, so balls scored via the Vercel API are pushed
+# to browsers connected here.
+#
+# After deploy: set NEXT_PUBLIC_WS_URL=https://<this-service>.onrender.com
+# in the Vercel frontend project and redeploy the frontend.
+services:
+  - type: web
+    name: criclive-realtime
+    runtime: node
+    plan: free
+    rootDir: code/backend
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node dist/main.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PREFIX
+        value: api
+      - key: API_VERSION
+        value: v1
+      # Set these in the Render dashboard (same values as your Vercel backend):
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: CORS_ORIGINS
+        sync: false # e.g. https://cricket-score-frontend-mu.vercel.app,http://localhost:3000
+      - key: FRONTEND_URL
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CLOUDINARY_FOLDER
+        value: cricket_score
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_SECURE
+        value: "false"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: FROM_EMAIL
+        sync: false
+      - key: FROM_NAME
+        value: Live Score Cricket

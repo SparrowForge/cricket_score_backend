@@ -4,7 +4,7 @@
   "description": "CricLive cricket scoring platform — backend API",
   "private": true,
   "scripts": {
-    "build": "nest build",
+    "build": "npm exec --yes --package=@nestjs/cli@10.4.9 -- nest build",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
     "db:migrate": "node scripts/migrate.js",

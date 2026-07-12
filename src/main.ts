@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { parseCorsOrigins } from './common/cors-origins';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -29,10 +30,7 @@ async function bootstrap() {
     swaggerOptions: { persistAuthorization: true, docExpansion: 'none' },
   });
   app.enableCors({
-    origin: (process.env.CORS_ORIGINS ?? '')
-      .split(',')
-      .map((o) => o.trim().replace(/\/$/, ''))
-      .filter(Boolean),
+    origin: parseCorsOrigins(process.env.CORS_ORIGINS),
     credentials: true,
   });
 

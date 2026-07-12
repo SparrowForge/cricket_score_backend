@@ -7,6 +7,7 @@ import Redis from 'ioredis';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { LiveStateService } from '../matches/live-state.service';
+import { parseCorsOrigins } from '../common/cors-origins';
 import { REDIS_SUB } from '../redis/redis.module';
 
 const ROOM_RE = /^match:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -27,7 +28,7 @@ const ROOM_RE = /^match:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
  */
 @WebSocketGateway({
   namespace: '/live',
-  cors: { origin: (process.env.CORS_ORIGINS ?? '').split(',').map((o) => o.trim().replace(/\/$/, '')) },
+  cors: { origin: parseCorsOrigins(process.env.CORS_ORIGINS) },
 })
 export class LiveGateway implements OnModuleInit, OnGatewayDisconnect {
   @WebSocketServer() io!: Server;
