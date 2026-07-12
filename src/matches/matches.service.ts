@@ -43,13 +43,31 @@ export class MatchesService {
     ).rows;
   }
 
+  /**
+   * Create a match. When `format_id` is given, resolve the format's rule
+   * document, deep-merge `rule_overrides` (e.g. custom overs, free-hit
+   * on/off, max overs per bowler) onto it, and freeze the result as
+   * `rules_snapshot` right away — `toss()` already prefers an existing
+   * `rules_snapshot` over the tournament's format, so this is how a
+   * standalone friendly (or a one-off tournament match) gets its own rules
+   * without needing a tournament at all.
+   */
   async createManual(orgId: string, dto: any) {
+    let rulesSnapshot: string | null = null;
+    if (dto.format_id) {
+      const format = (
+        await this.pool.query(`SELECT rules FROM match_formats WHERE id = $1`, [dto.format_id])
+      ).rows[0];
+      if (!format) throw new BadRequestException('Unknown format_id');
+      rulesSnapshot = JSON.stringify(deepMerge(format.rules, dto.rule_overrides ?? {}));
+    }
+
     const res = await this.pool.query(
       `INSERT INTO matches (tournament_id, organization_id, match_number, stage, stage_label, group_id,
-                            team_a_id, team_b_id, venue_id, scheduled_start)
-       VALUES ($1,$2,$3, coalesce($4,'league')::fixture_stage, $5, $6, $7, $8, $9, $10) RETURNING *`,
+                            team_a_id, team_b_id, venue_id, scheduled_start, rules_snapshot)
+       VALUES ($1,$2,$3, coalesce($4,'league')::fixture_stage, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
       [dto.tournament_id ?? null, orgId, dto.match_number ?? null, dto.stage ?? null, dto.stage_label ?? null,
-       dto.group_id ?? null, dto.team_a_id, dto.team_b_id, dto.venue_id ?? null, dto.scheduled_start],
+       dto.group_id ?? null, dto.team_a_id, dto.team_b_id, dto.venue_id ?? null, dto.scheduled_start, rulesSnapshot],
     );
     return res.rows[0];
   }

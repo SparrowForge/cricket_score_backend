@@ -127,10 +127,10 @@ INSERT INTO subscription_plans (slug, name, description, price_cents, currency, 
 -- ---------- Marketing site: default pages ----------
 INSERT INTO cms_pages (slug, title, status, blocks, seo, published_at) VALUES
 ('home', 'CricLive — Live Cricket Scoring for Every League', 'published',
- '[{"id":"hero","type":"hero","props":{"heading":"Score every ball. Share every moment.","subheading":"Professional live scoring, stats and streaming-grade scorecards for clubs, schools and leagues.","cta":{"label":"Start free","href":"/signup"},"secondary_cta":{"label":"Watch demo","href":"/demo"}}},
+ '[{"id":"hero","type":"hero","props":{"heading":"Score every ball. Share every moment.","subheading":"Professional live scoring, stats and streaming-grade scorecards for clubs, schools and leagues.","cta":{"label":"Start free","href":"/register"},"secondary_cta":{"label":"Watch demo","href":"/demo"}}},
    {"id":"features","type":"feature_grid","props":{"columns":3,"items":[{"icon":"radio","title":"Real-time scoring","body":"Sub-second ball-by-ball updates to every fan."},{"icon":"settings","title":"Any format","body":"T20, ODI, Test, sixes — or invent your own rules."},{"icon":"bar-chart","title":"Pro stats","body":"Wagon wheels, Manhattans, career records out of the box."}]}},
    {"id":"pricing_preview","type":"pricing_table","props":{"plan_slugs":["free","club","league"]}},
-   {"id":"cta","type":"cta_banner","props":{"heading":"Your league deserves better than a paper scorebook.","cta":{"label":"Create your first tournament","href":"/signup"}}}]',
+   {"id":"cta","type":"cta_banner","props":{"heading":"Your league deserves better than a paper scorebook.","cta":{"label":"Create your first tournament","href":"/register"}}}]',
  '{"title":"CricLive — Live Cricket Scoring Platform","description":"Real-time cricket scoring, stats and tournament management for clubs and leagues."}', now()),
 ('features', 'Features', 'published', '[]', '{}', now()),
 ('pricing',  'Pricing',  'published', '[{"id":"plans","type":"pricing_table","props":{"plan_slugs":["free","club","league","pro"],"show_comparison":true}}]', '{}', now()),

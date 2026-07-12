@@ -250,14 +250,18 @@ export class CatalogService {
   async createPlayer(orgId: string, dto: any) {
     const res = await this.pool.query(
       `INSERT INTO players (organization_id, full_name, display_name, date_of_birth,
-                            batting_style, bowling_style, primary_role, photo_url, country)
-       VALUES ($1,$2,$3,$4,$5::batting_style, coalesce($6,'none')::bowling_style, coalesce($7,'batter')::player_role, $8, $9) RETURNING *`,
+                            batting_style, bowling_style, primary_role, photo_url, country,
+                            height_cm, major_teams, bio)
+       VALUES ($1,$2,$3,$4,$5::batting_style, coalesce($6,'none')::bowling_style, coalesce($7,'batter')::player_role, $8, $9,
+               $10, coalesce($11::text[],'{}'::text[]), $12) RETURNING *`,
       [orgId, dto.full_name, dto.display_name ?? null, dto.date_of_birth ?? null,
-       dto.batting_style ?? null, dto.bowling_style, dto.primary_role, dto.photo_url ?? null, dto.country ?? null],
+       dto.batting_style ?? null, dto.bowling_style, dto.primary_role, dto.photo_url ?? null, dto.country ?? null,
+       dto.height_cm ?? null, dto.major_teams ?? null, dto.bio ?? null],
     );
     return res.rows[0];
   }
 
+  /** Full profile: bio fields, career stats, recent matches, and current team affiliations. */
   async player(playerId: string) {
     const p = (await this.pool.query(`SELECT * FROM players WHERE id = $1 AND deleted_at IS NULL`, [playerId])).rows[0];
     if (!p) throw new NotFoundException('Player not found');
@@ -273,7 +277,32 @@ export class CatalogService {
         [playerId],
       )
     ).rows;
+    p.teams = (
+      await this.pool.query(
+        `SELECT t.id, t.name, t.short_name, t.logo_url
+         FROM team_players tp JOIN teams t ON t.id = tp.team_id
+         WHERE tp.player_id = $1 AND tp.active_to IS NULL AND t.deleted_at IS NULL
+         ORDER BY t.name`,
+        [playerId],
+      )
+    ).rows;
     return p;
+  }
+
+  /** Global, unauthenticated search across every organization's roster (public profile browsing). */
+  async publicSearch(search?: string, limit = 20) {
+    return (
+      await this.pool.query(
+        `SELECT p.id, p.full_name, p.display_name, p.primary_role, p.photo_url, p.country,
+                p.date_of_birth, p.height_cm, p.major_teams
+         FROM players p
+         JOIN organizations o ON o.id = p.organization_id AND o.deleted_at IS NULL
+         WHERE p.deleted_at IS NULL
+           AND ($1::text IS NULL OR p.full_name ILIKE '%' || $1 || '%')
+         ORDER BY p.full_name LIMIT $2`,
+        [search ?? null, Math.min(limit, 50)],
+      )
+    ).rows;
   }
 
   async updatePlayer(playerId: string, dto: any) {
@@ -281,11 +310,13 @@ export class CatalogService {
       `UPDATE players SET full_name = coalesce($2,full_name), display_name = coalesce($3,display_name),
               date_of_birth = coalesce($4,date_of_birth), batting_style = coalesce($5::batting_style,batting_style),
               bowling_style = coalesce($6::bowling_style,bowling_style), primary_role = coalesce($7::player_role,primary_role),
-              photo_url = coalesce($8,photo_url), country = coalesce($9,country)
+              photo_url = coalesce($8,photo_url), country = coalesce($9,country),
+              height_cm = coalesce($10,height_cm), major_teams = coalesce($11::text[],major_teams), bio = coalesce($12,bio)
        WHERE id = $1 AND deleted_at IS NULL RETURNING *`,
       [playerId, dto.full_name ?? null, dto.display_name ?? null, dto.date_of_birth ?? null,
        dto.batting_style ?? null, dto.bowling_style ?? null, dto.primary_role ?? null,
-       dto.photo_url ?? null, dto.country ?? null],
+       dto.photo_url ?? null, dto.country ?? null,
+       dto.height_cm ?? null, dto.major_teams ?? null, dto.bio ?? null],
     );
     if (res.rowCount === 0) throw new NotFoundException('Player not found');
     return res.rows[0];

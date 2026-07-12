@@ -26,6 +26,10 @@ class CreateMatchDto {
   @IsUUID() team_b_id!: string;
   @IsOptional() @IsUUID() venue_id?: string;
   @IsDateString() scheduled_start!: string;
+  /** Base ruleset (from GET /formats) — omit to inherit the tournament's format, or T20 for a bare friendly */
+  @IsOptional() @IsUUID() format_id?: string;
+  /** Deep-merged onto the format's rules, e.g. {"overs_per_innings":10,"no_ball":{"free_hit":false},"max_overs_per_bowler":2} */
+  @IsOptional() @IsObject() rule_overrides?: object;
 }
 
 class SquadPlayerDto {

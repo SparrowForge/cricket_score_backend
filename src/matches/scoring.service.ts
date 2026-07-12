@@ -87,10 +87,16 @@ export class ScoringService {
   // ------------------------------------------------------------ open innings
   async openers(matchId: string, dto: { striker_id: string; non_striker_id: string; bowler_id: string }) {
     const out = await this.withMatch(matchId, async (client, match) => {
-      if (!['toss', 'innings_break'].includes(match.status)) {
+      const ls = match.live_state;
+      // Normal case: toss just happened, or an innings break is pending openers.
+      // Self-heal case: status is 'live' but no engine exists (e.g. an innings was
+      // reopened after having 0 balls scored, so no striker/bowler could be
+      // recovered by replay) — allow re-selecting openers instead of getting stuck.
+      const canSetOpeners = ['toss', 'innings_break'].includes(match.status)
+        || (match.status === 'live' && !ls?.engine);
+      if (!canSetOpeners) {
         throw new BadRequestException(`Cannot set openers now (status: ${match.status})`);
       }
-      const ls = match.live_state;
       if (ls?.follow_on_available) {
         throw new BadRequestException('Follow-on decision pending — POST /matches/:id/follow-on first');
       }
@@ -848,6 +854,7 @@ export class ScoringService {
     const ls = match.live_state;
     let engine: LiveInningsState | null = null;
     ls.batters = {}; ls.bowlers = {}; ls.this_over = []; ls.over_bowler_runs = 0; ls.pending_new_batter = null;
+    ls.current_bowler = null; // overwritten below if balls exist; stale value must not survive a 0-ball replay
 
     await client.query(`DELETE FROM over_summaries WHERE innings_id = $1`, [inningsId]);
 
@@ -936,9 +943,14 @@ export class ScoringService {
     ls.engine = engine;
     ls.summary = await this.buildSummary(client, ls, rules);
     const newSeq = engine?.seq ?? 0;
+    // No balls survived the replay (e.g. the innings was closed before any ball
+    // was scored) — there is no striker/bowler to resume with, so drop back to
+    // innings_break instead of a broken 'live' state; openers() will accept a
+    // fresh selection from there.
+    const newStatus = engine ? 'live' : 'innings_break';
     await client.query(
-      `UPDATE matches SET live_state = $2, live_state_seq = $3, status = 'live' WHERE id = $1`,
-      [match.id, JSON.stringify(ls), newSeq],
+      `UPDATE matches SET live_state = $2, live_state_seq = $3, status = $4 WHERE id = $1`,
+      [match.id, JSON.stringify(ls), newSeq, newStatus],
     );
     return ls;
   }

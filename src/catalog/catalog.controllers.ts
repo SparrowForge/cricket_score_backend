@@ -3,10 +3,12 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import {
-  IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, IsUUID, Matches, MaxLength, Min,
+  ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional,
+  IsString, IsUUID, Matches, MaxLength, Min,
 } from 'class-validator';
 import { JwtAuthGuard, JwtPayload } from '../auth/jwt-auth.guard';
 import { AccessService, CurrentUser } from '../common/auth';
+import { Public } from '../common/public.decorator';
 import { SaasService } from '../saas/saas.service';
 import { CatalogService } from './catalog.service';
 
@@ -65,6 +67,10 @@ class CreatePlayerDto {
   primary_role?: string;
   @IsOptional() @IsString() photo_url?: string;
   @IsOptional() @IsString() country?: string;
+  @IsOptional() @IsInt() @Min(80) height_cm?: number;
+  /** e.g. ["Bangladesh U19", "Dhaka Metro"] */
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) major_teams?: string[];
+  @IsOptional() @IsString() @MaxLength(2000) bio?: string;
 }
 
 class UpdatePlayerDto extends CreatePlayerDto {
@@ -273,13 +279,23 @@ export class TeamsController {
   }
 }
 
+// NOTE: no class-level @UseGuards here — player profiles are public (anyone
+// can search and view a profile). Only the org-scoped list and the
+// create/update/delete mutations require auth, applied per-route below.
 @ApiTags('Players')
 @Controller()
-@UseGuards(JwtAuthGuard)
 export class PlayersController {
   constructor(private readonly catalog: CatalogService, private readonly access: AccessService) {}
 
+  /** Global player search — public, no org scoping. Powers the site-wide "search a player" page. */
+  @Public()
+  @Get('players')
+  search(@Query('search') search?: string, @Query('limit') limit?: string) {
+    return this.catalog.publicSearch(search, limit ? Number(limit) : undefined);
+  }
+
   @Get('orgs/:orgId/players')
+  @UseGuards(JwtAuthGuard)
   async list(
     @Param('orgId', ParseUUIDPipe) orgId: string,
     @CurrentUser() user: JwtPayload,
@@ -290,6 +306,7 @@ export class PlayersController {
   }
 
   @Post('orgs/:orgId/players')
+  @UseGuards(JwtAuthGuard)
   async create(
     @Param('orgId', ParseUUIDPipe) orgId: string,
     @CurrentUser() user: JwtPayload,
@@ -299,13 +316,15 @@ export class PlayersController {
     return this.catalog.createPlayer(orgId, dto);
   }
 
-  /** Player profile with career stats + recent matches. */
+  /** Public player profile: bio, career stats, recent matches, current team affiliations. */
+  @Public()
   @Get('players/:playerId')
   player(@Param('playerId', ParseUUIDPipe) playerId: string) {
     return this.catalog.player(playerId);
   }
 
   @Patch('players/:playerId')
+  @UseGuards(JwtAuthGuard)
   async update(
     @Param('playerId', ParseUUIDPipe) playerId: string,
     @CurrentUser() user: JwtPayload,
@@ -316,6 +335,7 @@ export class PlayersController {
   }
 
   @Delete('players/:playerId')
+  @UseGuards(JwtAuthGuard)
   async remove(@Param('playerId', ParseUUIDPipe) playerId: string, @CurrentUser() user: JwtPayload) {
     await this.access.assertOrgPermission(await this.catalog.orgIdOfPlayer(playerId), user, 'player:delete');
     return this.catalog.deletePlayer(playerId);
