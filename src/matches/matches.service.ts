@@ -3,6 +3,35 @@ import { Pool } from 'pg';
 import { PG_POOL } from '../database/database.module';
 import { LiveStateService } from './live-state.service';
 
+/** Scorecard dismissal line: 'caught Dhoni bowled Jadeja' | 'caught & bowled Jadeja' | 'run out Jadeja' | 'bowled Bumrah' … */
+function dismissalText(w: {
+  wicket_type: string; bowler_id: string; fielder_id: string | null;
+  bowler_name: string; fielder_name: string | null;
+}): string {
+  switch (w.wicket_type) {
+    case 'caught':
+    case 'caught_behind':
+      // Bowler taking his own catch is caught & bowled even if scored as plain 'caught'.
+      return w.fielder_id && w.fielder_id !== w.bowler_id
+        ? `caught ${w.fielder_name} bowled ${w.bowler_name}`
+        : `caught & bowled ${w.bowler_name}`;
+    case 'caught_and_bowled':
+      return `caught & bowled ${w.bowler_name}`;
+    case 'bowled':
+      return `bowled ${w.bowler_name}`;
+    case 'lbw':
+      return `lbw bowled ${w.bowler_name}`;
+    case 'stumped':
+      return w.fielder_name ? `stumped ${w.fielder_name} bowled ${w.bowler_name}` : `stumped bowled ${w.bowler_name}`;
+    case 'hit_wicket':
+      return `hit wicket bowled ${w.bowler_name}`;
+    case 'run_out':
+      return w.fielder_name ? `run out ${w.fielder_name}` : 'run out';
+    default:
+      return w.wicket_type.replace(/_/g, ' ');
+  }
+}
+
 export function deepMerge(base: any, override: any): any {
   if (override === null || override === undefined) return base;
   if (typeof base !== 'object' || typeof override !== 'object' || Array.isArray(base) || Array.isArray(override)) {
@@ -329,8 +358,8 @@ export class MatchesService {
                   coalesce(sum(b.runs_batter),0)::int AS runs,
                   count(*) FILTER (WHERE b.is_boundary_four)::int AS fours,
                   count(*) FILTER (WHERE b.is_boundary_six)::int AS sixes,
-                  bool_or(b.is_wicket AND b.dismissed_player_id = p.id) AS is_out,
-                  max(b.wicket_type::text) FILTER (WHERE b.dismissed_player_id = p.id) AS dismissal
+                  false AS is_out,
+                  null::text AS dismissal
            FROM balls b JOIN players p ON p.id = b.striker_id
            WHERE b.innings_id = $1 AND NOT b.is_superseded
            GROUP BY p.id, p.full_name
@@ -338,6 +367,27 @@ export class MatchesService {
           [inn.id],
         )
       ).rows;
+      // Dismissals joined separately (not via striker) so a non-striker run out is credited too.
+      const wickets = (
+        await this.pool.query(
+          `SELECT b.dismissed_player_id, b.wicket_type::text AS wicket_type, b.bowler_id, b.fielder_id,
+                  bp.full_name AS bowler_name, fp.full_name AS fielder_name
+           FROM balls b
+           JOIN players bp ON bp.id = b.bowler_id
+           LEFT JOIN players fp ON fp.id = b.fielder_id
+           WHERE b.innings_id = $1 AND b.is_wicket AND NOT b.is_superseded
+             AND b.dismissed_player_id IS NOT NULL`,
+          [inn.id],
+        )
+      ).rows;
+      const wicketByBatter = new Map(wickets.map((w) => [w.dismissed_player_id, w]));
+      for (const bat of inn.batting) {
+        const w = wicketByBatter.get(bat.id);
+        if (w) {
+          bat.is_out = true;
+          bat.dismissal = dismissalText(w);
+        }
+      }
       inn.bowling = (
         await this.pool.query(
           `SELECT p.id, p.full_name,
