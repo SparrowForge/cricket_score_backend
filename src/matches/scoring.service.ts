@@ -250,6 +250,16 @@ export class ScoringService {
       ls.this_over.push(this.ballLabel(ev, isFour, isSix));
       ls.current_bowler = bowlerId;
 
+      // ---- Auto ball-by-ball commentary ----
+      const isHighlight = !!ev.wicket || isFour || isSix;
+      await client.query(
+        `INSERT INTO commentary_entries (match_id, innings_id, ball_id, source, body, is_highlight)
+         VALUES ($1, $2, $3, 'auto', $4, $5)`,
+        [matchId, ls.innings_id, inserted.rows[0].id,
+         this.commentaryText(overNumber, ballInOver, bowl.name, bat.name, ev, totalExtras, isFour, isSix, post),
+         isHighlight],
+      );
+
       // ---- Effects ----
       let matchCompleted = false;
       for (const ef of result.effects) {
@@ -358,6 +368,7 @@ export class ScoringService {
       ).rows[0];
       if (!last) throw new BadRequestException('No balls to undo');
       await client.query(`UPDATE balls SET is_superseded = true WHERE id = $1`, [last.id]);
+      await client.query(`DELETE FROM commentary_entries WHERE ball_id = $1 AND source = 'auto'`, [last.id]);
       const rebuilt = await this.replayInnings(client, match, ls.innings_id);
       return { undone: last.id, state: rebuilt };
     });
@@ -381,6 +392,64 @@ export class ScoringService {
       return { state: ls };
     });
     await this.live.syncAndPublish(matchId, 'status', { transition: 'innings_closed' });
+    return out;
+  }
+
+  // -------------------------------------------------- reopen innings (undo close/declare)
+  /**
+   * Undo an innings close (accidental declare / early close). Only possible
+   * while the next innings hasn't started (no balls scored, no openers).
+   * Deletes the empty next innings, reopens the previous one, and rebuilds
+   * live state by replaying its ball stream.
+   */
+  async reopenInnings(matchId: string) {
+    const out = await this.withMatch(matchId, async (client, match) => {
+      if (!['innings_break', 'live', 'toss'].includes(match.status)) {
+        throw new BadRequestException(`Cannot reopen an innings now (status: ${match.status})`);
+      }
+      const ls = match.live_state;
+      const innings = (
+        await client.query(`SELECT * FROM innings WHERE match_id = $1 ORDER BY seq`, [matchId])
+      ).rows;
+      if (innings.length === 0) throw new BadRequestException('No innings to reopen');
+
+      let toReopen: any;
+      if (ls?.follow_on_available) {
+        // Break happened at the follow-on decision point — no next innings exists yet
+        toReopen = innings[innings.length - 1];
+      } else {
+        const current = innings.find((i) => i.id === ls?.innings_id);
+        if (!current) throw new BadRequestException('No innings context to reopen');
+        if (current.status === 'in_progress' || (current.status === 'not_started' && current.seq === 1)) {
+          throw new BadRequestException('Innings is already open — use ball undo instead');
+        }
+        if (current.status === 'not_started') {
+          const balls = await client.query(`SELECT 1 FROM balls WHERE innings_id = $1 LIMIT 1`, [current.id]);
+          if (balls.rowCount! > 0) throw new BadRequestException('Next innings already has deliveries');
+          await client.query(`DELETE FROM innings WHERE id = $1`, [current.id]);
+          toReopen = innings[innings.findIndex((i) => i.id === current.id) - 1];
+        } else {
+          // e.g. innings just completed and match paused before next was created
+          toReopen = current;
+        }
+      }
+      if (!toReopen || !['completed', 'declared', 'forfeited'].includes(toReopen.status)) {
+        throw new BadRequestException('Previous innings is not in a reopenable state');
+      }
+
+      await client.query(
+        `UPDATE innings SET status = 'in_progress', ended_at = NULL WHERE id = $1`,
+        [toReopen.id],
+      );
+      ls.innings_id = toReopen.id;
+      ls.innings_seq = toReopen.seq;
+      ls.follow_on_available = null;
+      ls.follow_on_decision = null;
+      const rebuilt = await this.replayInnings(client, match, toReopen.id);
+      return { reopened_innings: toReopen.seq, state: rebuilt };
+    });
+    // Clients discard local state and adopt the snapshot, like an undo
+    await this.live.syncAndPublish(matchId, 'correction', { transition: 'innings_reopened' });
     return out;
   }
 
@@ -917,6 +986,25 @@ export class ScoringService {
   private async bowlerCard(client: PoolClient, playerId: string) {
     const p = (await client.query(`SELECT full_name FROM players WHERE id = $1`, [playerId])).rows[0];
     return { name: p?.full_name ?? 'Unknown', legal_balls: 0, runs: 0, wickets: 0, maidens: 0 };
+  }
+
+  private commentaryText(
+    over: number, ballInOver: number, bowler: string, striker: string,
+    ev: BallEvent, totalExtras: number, four: boolean, six: boolean, post: LiveInningsState,
+  ): string {
+    const head = `${over}.${ballInOver} — ${bowler} to ${striker}, `;
+    let desc: string;
+    if (ev.wicket) {
+      desc = `WICKET! ${ev.wicket.type.replace(/_/g, ' ')}${ev.runsBatter ? ` (${ev.runsBatter} run${ev.runsBatter > 1 ? 's' : ''} completed)` : ''}`;
+    } else if (six) desc = 'SIX! That has sailed over the rope';
+    else if (four) desc = 'FOUR! Finds the boundary';
+    else if (ev.extraType === 'wide') desc = `wide${totalExtras > 1 ? `, ${totalExtras} extras` : ''}`;
+    else if (ev.extraType === 'no_ball') desc = `no ball${ev.runsBatter ? ` — ${ev.runsBatter} off the bat` : ''}${post.freeHitPending ? ', free hit coming up' : ''}`;
+    else if (ev.extraType === 'bye') desc = `${ev.runsExtras} bye${ev.runsExtras > 1 ? 's' : ''}`;
+    else if (ev.extraType === 'leg_bye') desc = `${ev.runsExtras} leg bye${ev.runsExtras > 1 ? 's' : ''}`;
+    else if (ev.runsBatter === 0) desc = 'no run';
+    else desc = `${ev.runsBatter} run${ev.runsBatter > 1 ? 's' : ''}`;
+    return `${head}${desc}. ${post.totalRuns}/${post.totalWickets}`;
   }
 
   private ballLabel(ev: BallEvent, four: boolean, six: boolean): string {

@@ -28,6 +28,22 @@ export class ContentService {
     ).rows;
   }
 
+  /** Org admin list — every status, for the news manager UI. */
+  async orgNews(orgId: string) {
+    return (
+      await this.pool.query(
+        `SELECT n.id, n.title, n.slug, n.excerpt, n.tags, n.status, n.published_at, n.created_at,
+                n.tournament_id, n.match_id, u.full_name AS author, ma.cdn_url AS cover_url, n.cover_asset_id
+         FROM news_articles n
+         JOIN users u ON u.id = n.author_id
+         LEFT JOIN media_assets ma ON ma.id = n.cover_asset_id
+         WHERE n.organization_id = $1
+         ORDER BY n.created_at DESC LIMIT 100`,
+        [orgId],
+      )
+    ).rows;
+  }
+
   async newsArticle(slug: string) {
     const res = await this.pool.query(
       `SELECT n.*, u.full_name AS author, ma.cdn_url AS cover_url

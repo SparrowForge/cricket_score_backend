@@ -73,6 +73,14 @@ export class NewsController {
     return this.content.newsArticle(slug);
   }
 
+  /** Org news manager list — includes drafts/unpublished. */
+  @Get('orgs/:orgId/news')
+  @UseGuards(JwtAuthGuard)
+  async orgList(@Param('orgId', ParseUUIDPipe) orgId: string, @CurrentUser() user: JwtPayload) {
+    await this.access.assertOrgMember(orgId, user);
+    return this.content.orgNews(orgId);
+  }
+
   @Post('orgs/:orgId/news')
   @UseGuards(JwtAuthGuard)
   async create(

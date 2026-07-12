@@ -1,0 +1,4117 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "HealthController_health",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "operationId": "AuthController_register",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "AuthController_login",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "operationId": "AuthController_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      },
+      "patch": {
+        "operationId": "AuthController_updateProfile",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Update profile (name / avatar / phone).",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/me/permissions": {
+      "get": {
+        "operationId": "AuthController_myPermissions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Resolved permission grants per scope — use to gate admin UI.",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/change-password": {
+      "post": {
+        "operationId": "AuthController_changePassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/forgot-password": {
+      "post": {
+        "operationId": "AuthController_forgotPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotPasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Sends a reset link by email. Always returns {sent:true}.",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/reset-password": {
+      "post": {
+        "operationId": "AuthController_resetPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/media/uploads": {
+      "post": {
+        "operationId": "MediaController_upload",
+        "parameters": [
+          {
+            "name": "folder",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Media"
+        ]
+      }
+    },
+    "/api/v1/media": {
+      "get": {
+        "operationId": "MediaController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Media"
+        ]
+      }
+    },
+    "/api/v1/media/{id}": {
+      "delete": {
+        "operationId": "MediaController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Media"
+        ]
+      }
+    },
+    "/api/v1/orgs": {
+      "post": {
+        "operationId": "OrgsController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOrgDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Create an organization (you become owner, tournament admin, on the free plan).",
+        "tags": [
+          "Organizations"
+        ]
+      },
+      "get": {
+        "operationId": "OrgsController_mine",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Organizations you own or belong to.",
+        "tags": [
+          "Organizations"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}": {
+      "get": {
+        "operationId": "OrgsController_get",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Organizations"
+        ]
+      },
+      "patch": {
+        "operationId": "OrgsController_update",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOrgDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Organizations"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/members": {
+      "get": {
+        "operationId": "OrgsController_members",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Organizations"
+        ]
+      },
+      "post": {
+        "operationId": "OrgsController_addMember",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMemberDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Add a registered user to the org with a role (tournament_admin | scorer | commentator | viewer).",
+        "tags": [
+          "Organizations"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/members/{userId}": {
+      "delete": {
+        "operationId": "OrgsController_removeMember",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Organizations"
+        ]
+      }
+    },
+    "/api/v1/rbac/permissions": {
+      "get": {
+        "operationId": "RbacController_permissions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Full permission catalog (resource + action) for the role editor grid.",
+        "tags": [
+          "RBAC"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/roles": {
+      "get": {
+        "operationId": "RbacController_roles",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "System roles + this org's custom roles, with their permission sets.",
+        "tags": [
+          "RBAC"
+        ]
+      },
+      "post": {
+        "operationId": "RbacController_createRole",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRoleDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Create a custom org role with a permission set.",
+        "tags": [
+          "RBAC"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/roles/{roleId}": {
+      "patch": {
+        "operationId": "RbacController_updateRole",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "roleId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRoleDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Edit a custom role; permission_ids (when given) replaces the whole set.",
+        "tags": [
+          "RBAC"
+        ]
+      },
+      "delete": {
+        "operationId": "RbacController_deleteRole",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "roleId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "RBAC"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/role-assignments": {
+      "get": {
+        "operationId": "RbacController_assignments",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "All role assignments in this org's scope (org / tournament / match grants).",
+        "tags": [
+          "RBAC"
+        ]
+      },
+      "post": {
+        "operationId": "RbacController_assign",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignRoleDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Grant a role scoped to the org, a tournament, or a single match.",
+        "tags": [
+          "RBAC"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/role-assignments/{assignmentId}": {
+      "delete": {
+        "operationId": "RbacController_revoke",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "assignmentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "RBAC"
+        ]
+      }
+    },
+    "/api/v1/plans": {
+      "get": {
+        "operationId": "PlansController_publicPlans",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Public pricing (marketing site). No auth required.",
+        "tags": [
+          "Plans"
+        ]
+      }
+    },
+    "/api/v1/plans/admin/all": {
+      "get": {
+        "operationId": "PlansController_allPlans",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "All plans incl. hidden/inactive (super admin).",
+        "tags": [
+          "Plans"
+        ]
+      }
+    },
+    "/api/v1/plans/admin": {
+      "post": {
+        "operationId": "PlansController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePlanDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Plans"
+        ]
+      }
+    },
+    "/api/v1/plans/admin/{id}": {
+      "patch": {
+        "operationId": "PlansController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePlanDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Plans"
+        ]
+      },
+      "delete": {
+        "operationId": "PlansController_retire",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Plans"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/subscription": {
+      "get": {
+        "operationId": "SubscriptionsController_get",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Subscriptions"
+        ]
+      },
+      "post": {
+        "operationId": "SubscriptionsController_change",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePlanDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Switch the org to another plan (trial starts automatically on paid plans).",
+        "tags": [
+          "Subscriptions"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/subscription/entitlements": {
+      "get": {
+        "operationId": "SubscriptionsController_entitlements",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Subscriptions"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/subscription/cancel": {
+      "post": {
+        "operationId": "SubscriptionsController_cancel",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Subscriptions"
+        ]
+      }
+    },
+    "/api/v1/formats": {
+      "get": {
+        "operationId": "FormatsController_formats",
+        "parameters": [
+          {
+            "name": "org",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Formats"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/formats": {
+      "post": {
+        "operationId": "FormatsController_createFormat",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFormatDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Formats"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/officials": {
+      "get": {
+        "operationId": "OfficialsController_list",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Officials"
+        ]
+      },
+      "post": {
+        "operationId": "OfficialsController_create",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOfficialDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Officials"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/officials/{officialId}": {
+      "patch": {
+        "operationId": "OfficialsController_update",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "officialId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOfficialDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Officials"
+        ]
+      },
+      "delete": {
+        "operationId": "OfficialsController_remove",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "officialId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Officials"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/venues": {
+      "get": {
+        "operationId": "VenuesController_list",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Venues"
+        ]
+      },
+      "post": {
+        "operationId": "VenuesController_create",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateVenueDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Venues"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/venues/{venueId}": {
+      "patch": {
+        "operationId": "VenuesController_update",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "venueId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateVenueDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Venues"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/teams": {
+      "get": {
+        "operationId": "TeamsController_list",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Teams"
+        ]
+      },
+      "post": {
+        "operationId": "TeamsController_create",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTeamDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Teams"
+        ]
+      }
+    },
+    "/api/v1/teams/{teamId}": {
+      "get": {
+        "operationId": "TeamsController_team",
+        "parameters": [
+          {
+            "name": "teamId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Teams"
+        ]
+      },
+      "patch": {
+        "operationId": "TeamsController_update",
+        "parameters": [
+          {
+            "name": "teamId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTeamDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Teams"
+        ]
+      },
+      "delete": {
+        "operationId": "TeamsController_remove",
+        "parameters": [
+          {
+            "name": "teamId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Teams"
+        ]
+      }
+    },
+    "/api/v1/teams/{teamId}/stats": {
+      "get": {
+        "operationId": "TeamsController_teamStats",
+        "parameters": [
+          {
+            "name": "teamId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Teams"
+        ]
+      }
+    },
+    "/api/v1/teams/{teamId}/players": {
+      "post": {
+        "operationId": "TeamsController_addPlayer",
+        "parameters": [
+          {
+            "name": "teamId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddTeamPlayerDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Teams"
+        ]
+      }
+    },
+    "/api/v1/teams/{teamId}/players/{playerId}": {
+      "delete": {
+        "operationId": "TeamsController_removePlayer",
+        "parameters": [
+          {
+            "name": "teamId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "playerId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Teams"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/players": {
+      "get": {
+        "operationId": "PlayersController_list",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Players"
+        ]
+      },
+      "post": {
+        "operationId": "PlayersController_create",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePlayerDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Players"
+        ]
+      }
+    },
+    "/api/v1/players/{playerId}": {
+      "get": {
+        "operationId": "PlayersController_player",
+        "parameters": [
+          {
+            "name": "playerId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Players"
+        ]
+      },
+      "patch": {
+        "operationId": "PlayersController_update",
+        "parameters": [
+          {
+            "name": "playerId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePlayerDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Players"
+        ]
+      },
+      "delete": {
+        "operationId": "PlayersController_remove",
+        "parameters": [
+          {
+            "name": "playerId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Players"
+        ]
+      }
+    },
+    "/api/v1/tournaments": {
+      "get": {
+        "operationId": "TournamentsController_list",
+        "parameters": [
+          {
+            "name": "org",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Public tournament list (filter by status / org).",
+        "tags": [
+          "Tournaments"
+        ]
+      }
+    },
+    "/api/v1/tournaments/{id}": {
+      "get": {
+        "operationId": "TournamentsController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Public tournament detail with groups + teams.",
+        "tags": [
+          "Tournaments"
+        ]
+      },
+      "patch": {
+        "operationId": "TournamentsController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTournamentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Tournaments"
+        ]
+      },
+      "delete": {
+        "operationId": "TournamentsController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Tournaments"
+        ]
+      }
+    },
+    "/api/v1/tournaments/{id}/points-table": {
+      "get": {
+        "operationId": "TournamentsController_pointsTable",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Public points table.",
+        "tags": [
+          "Tournaments"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/tournaments": {
+      "post": {
+        "operationId": "TournamentsController_create",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTournamentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Tournaments"
+        ]
+      }
+    },
+    "/api/v1/tournaments/{id}/groups": {
+      "post": {
+        "operationId": "TournamentsController_createGroup",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGroupDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Tournaments"
+        ]
+      }
+    },
+    "/api/v1/tournaments/{id}/teams": {
+      "post": {
+        "operationId": "TournamentsController_attachTeam",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachTeamDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Tournaments"
+        ]
+      }
+    },
+    "/api/v1/tournaments/{id}/teams/{teamId}": {
+      "delete": {
+        "operationId": "TournamentsController_detachTeam",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "teamId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Tournaments"
+        ]
+      }
+    },
+    "/api/v1/tournaments/{id}/fixtures/generate": {
+      "post": {
+        "operationId": "TournamentsController_generate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateFixturesDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Generate DRAFT fixtures for review — nothing is persisted.",
+        "tags": [
+          "Tournaments"
+        ]
+      }
+    },
+    "/api/v1/tournaments/{id}/fixtures/confirm": {
+      "post": {
+        "operationId": "TournamentsController_confirm",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmFixturesDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Persist reviewed draft fixtures as scheduled matches.",
+        "tags": [
+          "Tournaments"
+        ]
+      }
+    },
+    "/api/v1/matches": {
+      "get": {
+        "operationId": "MatchesController_list",
+        "parameters": [
+          {
+            "name": "tournament",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "org",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}": {
+      "get": {
+        "operationId": "MatchesController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Match detail + innings summary.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/state": {
+      "get": {
+        "operationId": "MatchesController_state",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Live state snapshot — Redis-first, Postgres fallback (`source` field says which). Prefer the WebSocket feed (/live) for push updates.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/balls/recent": {
+      "get": {
+        "operationId": "MatchesController_recentBalls",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Last N ball events (Redis stream) for instant UI hydration.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/presence": {
+      "get": {
+        "operationId": "MatchesController_presence",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Live presence: {viewers, scorers} currently connected via WebSocket.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/scorecard": {
+      "get": {
+        "operationId": "MatchesController_scorecard",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Full scorecard (batting/bowling cards, fall of wickets).",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/overs": {
+      "get": {
+        "operationId": "MatchesController_overs",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Over-by-over data (Manhattan / over comparison).",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/commentary": {
+      "get": {
+        "operationId": "MatchesController_commentary",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "before",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      },
+      "post": {
+        "operationId": "MatchesController_addCommentary",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentaryDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Add manual commentary (commentator/scorer).",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/mvp": {
+      "get": {
+        "operationId": "MatchesController_mvp",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/stats": {
+      "get": {
+        "operationId": "MatchesController_matchStats",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Stats tab: wagon-wheel vectors, partnerships, over-by-over run rate.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/squads": {
+      "get": {
+        "operationId": "MatchesController_squads",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      },
+      "put": {
+        "operationId": "MatchesController_setSquad",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetSquadDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Set one team's squad: playing XI + 12th man with can_bat/can_bowl toggles.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/teams/{teamA}/head-to-head/{teamB}": {
+      "get": {
+        "operationId": "MatchesController_headToHead",
+        "parameters": [
+          {
+            "name": "teamA",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "teamB",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/tournaments/{id}/stats/leaders": {
+      "get": {
+        "operationId": "MatchesController_leaders",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Tournament leaderboards: metric = runs | wickets | mvp | sr | economy",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/matches": {
+      "post": {
+        "operationId": "MatchesController_create",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/scorers": {
+      "post": {
+        "operationId": "MatchesController_assignScorer",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignScorerDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Grant a user match-scoped scorer access.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/officials": {
+      "put": {
+        "operationId": "MatchesController_setOfficials",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetOfficialsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Set match officials (umpires, TV umpire, referee, scorer).",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/substitutions": {
+      "post": {
+        "operationId": "MatchesController_substitute",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubstitutionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Substitution: 12th man / concussion / impact player, with bat-bowl eligibility.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/toss": {
+      "post": {
+        "operationId": "MatchesController_toss",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TossDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/openers": {
+      "post": {
+        "operationId": "MatchesController_openers",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenersDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Set opening batters + bowler; match goes live. Also used after an innings break.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/balls": {
+      "post": {
+        "operationId": "MatchesController_ball",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BallDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Score one ball. Returns the new state + any effects (over_complete, innings_complete, match_complete…).",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/new-batter": {
+      "post": {
+        "operationId": "MatchesController_newBatter",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewBatterDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Send in the next batter after a wicket.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/balls/last": {
+      "delete": {
+        "operationId": "MatchesController_undo",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Undo the most recent ball (append-only supersede + full replay rebuild).",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/balls/batch": {
+      "post": {
+        "operationId": "MatchesController_ballBatch",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BallBatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Offline sync: apply queued balls in order; stops at first conflict for client rebase.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/interruptions": {
+      "post": {
+        "operationId": "MatchesController_interruption",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterruptionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Pause play for rain / bad light. Match status → rain_delay.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/interruptions/resume": {
+      "post": {
+        "operationId": "MatchesController_resume",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Resume play, optionally with a DLS/manual revision (reduced overs and/or revised target).",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/follow-on": {
+      "post": {
+        "operationId": "MatchesController_followOn",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowOnDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Decide the pending follow-on (Tests): enforce or bat normally.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/super-over": {
+      "post": {
+        "operationId": "MatchesController_superOver",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Create the Super Over tie-breaker child match for a tied match.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/innings/close": {
+      "post": {
+        "operationId": "MatchesController_closeInnings",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseInningsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Close the current innings manually (declaration, forfeit, rain-shortened).",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/finalize": {
+      "post": {
+        "operationId": "MatchesController_finalize",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinalizeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Finalize: set player of the match, force a result (abandoned/no_result), rebuild stats.",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/news": {
+      "get": {
+        "operationId": "NewsController_list",
+        "parameters": [
+          {
+            "name": "tournament",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "News"
+        ]
+      }
+    },
+    "/api/v1/news/{slug}": {
+      "get": {
+        "operationId": "NewsController_article",
+        "parameters": [
+          {
+            "name": "slug",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "News"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/news": {
+      "post": {
+        "operationId": "NewsController_create",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNewsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "News"
+        ]
+      }
+    },
+    "/api/v1/news-admin/{id}": {
+      "patch": {
+        "operationId": "NewsController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateNewsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "News"
+        ]
+      }
+    },
+    "/api/v1/news-admin/{id}/publish": {
+      "post": {
+        "operationId": "NewsController_publish",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "News"
+        ]
+      }
+    },
+    "/api/v1/news-admin/{id}/unpublish": {
+      "post": {
+        "operationId": "NewsController_unpublish",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "News"
+        ]
+      }
+    },
+    "/api/v1/cms/pages/{slug}": {
+      "get": {
+        "operationId": "CmsController_page",
+        "parameters": [
+          {
+            "name": "slug",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CMS"
+        ]
+      }
+    },
+    "/api/v1/cms/settings": {
+      "get": {
+        "operationId": "CmsController_settings",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CMS"
+        ]
+      }
+    },
+    "/api/v1/cms/admin/pages": {
+      "get": {
+        "operationId": "CmsController_pages",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CMS"
+        ]
+      },
+      "post": {
+        "operationId": "CmsController_createPage",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePageDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CMS"
+        ]
+      }
+    },
+    "/api/v1/cms/admin/pages/{id}": {
+      "get": {
+        "operationId": "CmsController_pageDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CMS"
+        ]
+      },
+      "patch": {
+        "operationId": "CmsController_updatePage",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePageDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CMS"
+        ]
+      }
+    },
+    "/api/v1/cms/admin/pages/{id}/publish": {
+      "post": {
+        "operationId": "CmsController_publish",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CMS"
+        ]
+      }
+    },
+    "/api/v1/cms/admin/pages/{id}/unpublish": {
+      "post": {
+        "operationId": "CmsController_unpublish",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CMS"
+        ]
+      }
+    },
+    "/api/v1/cms/admin/pages/{id}/revisions": {
+      "get": {
+        "operationId": "CmsController_revisions",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CMS"
+        ]
+      }
+    },
+    "/api/v1/cms/admin/pages/{id}/revisions/{n}/restore": {
+      "post": {
+        "operationId": "CmsController_restore",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "n",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CMS"
+        ]
+      }
+    },
+    "/api/v1/cms/admin/settings/{key}": {
+      "put": {
+        "operationId": "CmsController_setSetting",
+        "parameters": [
+          {
+            "name": "key",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CMS"
+        ]
+      }
+    },
+    "/api/v1/contact": {
+      "post": {
+        "operationId": "ContactController_submit",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Contact"
+        ]
+      }
+    },
+    "/api/v1/contact/admin": {
+      "get": {
+        "operationId": "ContactController_submissions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Contact"
+        ]
+      }
+    },
+    "/api/v1/me/follows": {
+      "get": {
+        "operationId": "EngagementController_follows",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      },
+      "post": {
+        "operationId": "EngagementController_follow",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    },
+    "/api/v1/me/follows/{entityType}/{entityId}": {
+      "delete": {
+        "operationId": "EngagementController_unfollow",
+        "parameters": [
+          {
+            "name": "entityType",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entityId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    },
+    "/api/v1/me/devices": {
+      "post": {
+        "operationId": "EngagementController_registerDevice",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Register an FCM/APNs push token for this device.",
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    },
+    "/api/v1/me/notification-preferences": {
+      "get": {
+        "operationId": "EngagementController_preferences",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      },
+      "put": {
+        "operationId": "EngagementController_setPreferences",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferencesDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    },
+    "/api/v1/me/notifications": {
+      "get": {
+        "operationId": "EngagementController_inbox",
+        "parameters": [
+          {
+            "name": "unread",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "In-app notification inbox.",
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    },
+    "/api/v1/me/notifications/{id}/read": {
+      "post": {
+        "operationId": "EngagementController_markRead",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    },
+    "/api/v1/me/notifications/read-all": {
+      "post": {
+        "operationId": "EngagementController_markAllRead",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "CricLive API",
+    "description": "Cricket live scoring platform ? auth, organizations, tournaments, ball-by-ball scoring, stats, SaaS plans, CMS. Authorize with the access_token from POST /auth/login.",
+    "version": "1.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "JWT": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http",
+        "description": "Paste access_token from /auth/login"
+      }
+    },
+    "schemas": {
+      "RegisterDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "LoginDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdateProfileDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ChangePasswordDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ForgotPasswordDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ResetPasswordDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateOrgDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdateOrgDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "AddMemberDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateRoleDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdateRoleDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "AssignRoleDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreatePlanDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdatePlanDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ChangePlanDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateFormatDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateOfficialDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdateOfficialDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateVenueDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdateVenueDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateTeamDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdateTeamDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "AddTeamPlayerDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreatePlayerDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdatePlayerDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateTournamentDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdateTournamentDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateGroupDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "AttachTeamDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "GenerateFixturesDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ConfirmFixturesDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateMatchDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "SetSquadDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "AssignScorerDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "SetOfficialsDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "SubstitutionDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "TossDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "OpenersDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "BallDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "NewBatterDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "BallBatchDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "InterruptionDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ResumeDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "FollowOnDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CloseInningsDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "FinalizeDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CommentaryDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateNewsDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdateNewsDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreatePageDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdatePageDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "SettingDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ContactDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "FollowDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "DeviceDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "PreferencesDto": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}

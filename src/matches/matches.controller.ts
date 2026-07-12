@@ -353,6 +353,14 @@ export class MatchesController {
     return this.scoring.resumeInterruption(id, dto);
   }
 
+  /** Undo an innings close/declare — reopens the previous innings while the next one hasn't started. */
+  @Post('matches/:id/innings/reopen')
+  @UseGuards(JwtAuthGuard)
+  async reopenInnings(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    await this.access.assertCanScore(id, user);
+    return this.scoring.reopenInnings(id);
+  }
+
   /** Decide the pending follow-on (Tests): enforce or bat normally. */
   @Post('matches/:id/follow-on')
   @UseGuards(JwtAuthGuard)
