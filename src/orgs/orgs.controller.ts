@@ -63,7 +63,8 @@ export class OrgsController {
   @Get(':orgId')
   async get(@Param('orgId', ParseUUIDPipe) orgId: string, @CurrentUser() user: JwtPayload) {
     await this.access.assertOrgMember(orgId, user);
-    return this.orgs.get(orgId);
+    const org = await this.orgs.get(orgId);
+    return { ...org, is_owner: org.owner_user_id === user.sub || user.roles.includes('super_admin') };
   }
 
   @Patch(':orgId')
@@ -74,6 +75,13 @@ export class OrgsController {
   ) {
     await this.access.assertOrgOwner(orgId, user);
     return this.orgs.update(orgId, dto);
+  }
+
+  /** Delete an organization (owner only). Soft-delete; blocked while a match is live. */
+  @Delete(':orgId')
+  async remove(@Param('orgId', ParseUUIDPipe) orgId: string, @CurrentUser() user: JwtPayload) {
+    await this.access.assertOrgOwner(orgId, user);
+    return this.orgs.softDelete(orgId);
   }
 
   @Get(':orgId/members')

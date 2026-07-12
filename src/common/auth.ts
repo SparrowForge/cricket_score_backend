@@ -61,6 +61,39 @@ export class AccessService {
     if (res.rowCount === 0) throw new ForbiddenException('Only the organization owner can do this');
   }
 
+  /**
+   * RBAC permission check scoped to an org.
+   * Passes if the user is super admin, the org owner, or holds a role grant
+   * (org-scoped or global) carrying `resource:action`. This is what powers the
+   * "edit/delete with permission" gating for tournaments, teams, players, venues.
+   */
+  async assertOrgPermission(orgId: string, user: JwtPayload, permission: string): Promise<void> {
+    if (this.isSuperAdmin(user)) return;
+    const [resource, action] = permission.split(':');
+    const res = await this.pool.query(
+      `SELECT 1 FROM organizations WHERE id = $1 AND owner_user_id = $2
+       UNION
+       SELECT 1
+       FROM user_role_assignments ura
+       JOIN role_permissions rp ON rp.role_id = ura.role_id
+       JOIN permissions p ON p.id = rp.permission_id
+       WHERE ura.user_id = $2
+         AND (ura.organization_id = $1 OR ura.organization_id IS NULL)
+         AND (ura.expires_at IS NULL OR ura.expires_at > now())
+         AND p.resource = $3 AND p.action = $4`,
+      [orgId, user.sub, resource, action],
+    );
+    if (res.rowCount === 0) throw new ForbiddenException(`Requires permission: ${permission}`);
+  }
+
+  /** Resolve a tournament's org, then assert an RBAC permission on it. */
+  async assertTournamentPermission(tournamentId: string, user: JwtPayload, permission: string): Promise<string> {
+    const t = await this.pool.query(`SELECT organization_id FROM tournaments WHERE id = $1`, [tournamentId]);
+    if (t.rowCount === 0) throw new ForbiddenException('Tournament not found');
+    await this.assertOrgPermission(t.rows[0].organization_id, user, permission);
+    return t.rows[0].organization_id;
+  }
+
   /** Scoring rights: match-scoped scorer grant, or member of the owning org, or super admin. */
   async assertCanScore(matchId: string, user: JwtPayload): Promise<void> {
     if (this.isSuperAdmin(user)) return;

@@ -129,14 +129,14 @@ export class TournamentsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateTournamentDto,
   ) {
-    await this.access.assertTournamentOrgMember(id, user);
+    await this.access.assertTournamentPermission(id, user, 'tournament:update');
     return this.tournaments.update(id, dto);
   }
 
   @Delete('tournaments/:id')
   @UseGuards(JwtAuthGuard)
   async remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
-    await this.access.assertTournamentOrgMember(id, user);
+    await this.access.assertTournamentPermission(id, user, 'tournament:delete');
     return this.tournaments.remove(id);
   }
 

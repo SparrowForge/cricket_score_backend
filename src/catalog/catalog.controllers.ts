@@ -170,7 +170,7 @@ export class VenuesController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreateVenueDto,
   ) {
-    await this.access.assertOrgMember(orgId, user);
+    await this.access.assertOrgPermission(orgId, user, 'venue:create');
     return this.catalog.createVenue(orgId, dto);
   }
 
@@ -181,8 +181,18 @@ export class VenuesController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateVenueDto,
   ) {
-    await this.access.assertOrgMember(orgId, user);
+    await this.access.assertOrgPermission(orgId, user, 'venue:update');
     return this.catalog.updateVenue(venueId, dto);
+  }
+
+  @Delete(':venueId')
+  async remove(
+    @Param('orgId', ParseUUIDPipe) orgId: string,
+    @Param('venueId', ParseUUIDPipe) venueId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.access.assertOrgPermission(orgId, user, 'venue:delete');
+    return this.catalog.deleteVenue(venueId);
   }
 }
 
@@ -231,24 +241,24 @@ export class TeamsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateTeamDto,
   ) {
-    await this.access.assertOrgMember(await this.catalog.orgIdOfTeam(teamId), user);
+    await this.access.assertOrgPermission(await this.catalog.orgIdOfTeam(teamId), user, 'team:update');
     return this.catalog.updateTeam(teamId, dto);
   }
 
   @Delete('teams/:teamId')
   async remove(@Param('teamId', ParseUUIDPipe) teamId: string, @CurrentUser() user: JwtPayload) {
-    await this.access.assertOrgMember(await this.catalog.orgIdOfTeam(teamId), user);
+    await this.access.assertOrgPermission(await this.catalog.orgIdOfTeam(teamId), user, 'team:delete');
     return this.catalog.deleteTeam(teamId);
   }
 
-  /** Add a player to the team squad (jersey / captain / keeper flags). */
+  /** Add/update a squad member (jersey / captain / keeper flags — upsert). */
   @Post('teams/:teamId/players')
   async addPlayer(
     @Param('teamId', ParseUUIDPipe) teamId: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: AddTeamPlayerDto,
   ) {
-    await this.access.assertOrgMember(await this.catalog.orgIdOfTeam(teamId), user);
+    await this.access.assertOrgPermission(await this.catalog.orgIdOfTeam(teamId), user, 'team:update');
     return this.catalog.addTeamPlayer(teamId, dto);
   }
 
@@ -258,7 +268,7 @@ export class TeamsController {
     @Param('playerId', ParseUUIDPipe) playerId: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    await this.access.assertOrgMember(await this.catalog.orgIdOfTeam(teamId), user);
+    await this.access.assertOrgPermission(await this.catalog.orgIdOfTeam(teamId), user, 'team:update');
     return this.catalog.removeTeamPlayer(teamId, playerId);
   }
 }
@@ -285,7 +295,7 @@ export class PlayersController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreatePlayerDto,
   ) {
-    await this.access.assertOrgMember(orgId, user);
+    await this.access.assertOrgPermission(orgId, user, 'player:create');
     return this.catalog.createPlayer(orgId, dto);
   }
 
@@ -301,13 +311,13 @@ export class PlayersController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdatePlayerDto,
   ) {
-    await this.access.assertOrgMember(await this.catalog.orgIdOfPlayer(playerId), user);
+    await this.access.assertOrgPermission(await this.catalog.orgIdOfPlayer(playerId), user, 'player:update');
     return this.catalog.updatePlayer(playerId, dto);
   }
 
   @Delete('players/:playerId')
   async remove(@Param('playerId', ParseUUIDPipe) playerId: string, @CurrentUser() user: JwtPayload) {
-    await this.access.assertOrgMember(await this.catalog.orgIdOfPlayer(playerId), user);
+    await this.access.assertOrgPermission(await this.catalog.orgIdOfPlayer(playerId), user, 'player:delete');
     return this.catalog.deletePlayer(playerId);
   }
 }

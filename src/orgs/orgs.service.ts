@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { PG_POOL } from '../database/database.module';
 import { JwtPayload } from '../auth/jwt-auth.guard';
@@ -90,6 +90,24 @@ export class OrgsService {
     );
     if (res.rowCount === 0) throw new NotFoundException('Organization not found');
     return res.rows[0];
+  }
+
+  /** Soft-delete an org. Blocked while any match is in progress. */
+  async softDelete(id: string) {
+    const live = await this.pool.query(
+      `SELECT count(*)::int AS n FROM matches
+       WHERE organization_id = $1 AND status IN ('toss','live','innings_break','rain_delay')`,
+      [id],
+    );
+    if (live.rows[0].n > 0) {
+      throw new BadRequestException('Finish or abandon in-progress matches before deleting this organization');
+    }
+    const res = await this.pool.query(
+      `UPDATE organizations SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+      [id],
+    );
+    if (res.rowCount === 0) throw new NotFoundException('Organization not found');
+    return { deleted: true };
   }
 
   async members(orgId: string) {

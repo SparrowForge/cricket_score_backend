@@ -59,6 +59,22 @@ export class CatalogService {
     return res.rows[0];
   }
 
+  async deleteVenue(id: string) {
+    // Detach from teams/matches that reference it so the delete is safe.
+    await this.pool.query(`UPDATE teams SET home_venue_id = NULL WHERE home_venue_id = $1`, [id]);
+    await this.pool.query(`UPDATE matches SET venue_id = NULL WHERE venue_id = $1`, [id]);
+    const res = await this.pool.query(`DELETE FROM venues WHERE id = $1 RETURNING id`, [id]);
+    if (res.rowCount === 0) throw new NotFoundException('Venue not found');
+    return { deleted: true };
+  }
+
+  async orgIdOfVenue(venueId: string): Promise<string> {
+    const r = await this.pool.query(`SELECT organization_id FROM venues WHERE id = $1`, [venueId]);
+    if (r.rowCount === 0) throw new NotFoundException('Venue not found');
+    if (!r.rows[0].organization_id) throw new NotFoundException('Built-in venue cannot be modified');
+    return r.rows[0].organization_id;
+  }
+
   // ---------- Officials (umpires / referees / scorers) ----------
   async officials(orgId: string) {
     return (
