@@ -12,6 +12,12 @@ import { CloudinaryService } from './cloudinary.service';
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_MIME = /^image\/(jpe?g|png|webp|gif|avif)$|^video\/(mp4|webm)$/;
 
+type UploadedMediaFile = {
+  mimetype: string;
+  buffer: Buffer;
+  size: number;
+};
+
 @Controller('media')
 @UseGuards(JwtAuthGuard)
 export class MediaController {
@@ -24,7 +30,7 @@ export class MediaController {
   @Throttle({ default: { ttl: 3_600_000, limit: 50 } })
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_FILE_BYTES } }))
   async upload(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: UploadedMediaFile,
     @Req() req: any,
     @Query('folder') folder?: string,
   ) {
