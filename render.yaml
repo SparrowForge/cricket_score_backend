@@ -11,7 +11,7 @@ services:
     name: criclive-realtime
     runtime: node
     plan: free
-    rootDir: code/backend
+    rootDir: backend
     buildCommand: npm ci --include=dev && npm run build
     startCommand: node dist/main.js
     healthCheckPath: /health
