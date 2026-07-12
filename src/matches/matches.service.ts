@@ -1,0 +1,422 @@
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Pool } from 'pg';
+import { PG_POOL } from '../database/database.module';
+import { LiveStateService } from './live-state.service';
+
+export function deepMerge(base: any, override: any): any {
+  if (override === null || override === undefined) return base;
+  if (typeof base !== 'object' || typeof override !== 'object' || Array.isArray(base) || Array.isArray(override)) {
+    return override;
+  }
+  const out: any = { ...base };
+  for (const key of Object.keys(override)) out[key] = deepMerge(base?.[key], override[key]);
+  return out;
+}
+
+@Injectable()
+export class MatchesService {
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    private readonly live: LiveStateService,
+  ) {}
+
+  async list(filter: { tournament?: string; org?: string; status?: string }) {
+    return (
+      await this.pool.query(
+        `SELECT m.id, m.match_number, m.stage, m.stage_label, m.status, m.scheduled_start,
+                m.result_summary, m.tournament_id,
+                ta.id AS team_a_id, ta.name AS team_a, ta.short_name AS team_a_short, ta.logo_url AS team_a_logo,
+                tb.id AS team_b_id, tb.name AS team_b, tb.short_name AS team_b_short, tb.logo_url AS team_b_logo,
+                v.name AS venue, t.name AS tournament_name,
+                m.live_state->'summary' AS live_summary
+         FROM matches m
+         JOIN teams ta ON ta.id = m.team_a_id
+         JOIN teams tb ON tb.id = m.team_b_id
+         LEFT JOIN venues v ON v.id = m.venue_id
+         LEFT JOIN tournaments t ON t.id = m.tournament_id
+         WHERE ($1::uuid IS NULL OR m.tournament_id = $1)
+           AND ($2::uuid IS NULL OR m.organization_id = $2)
+           AND ($3::text IS NULL OR m.status::text = $3)
+         ORDER BY m.scheduled_start DESC LIMIT 100`,
+        [filter.tournament ?? null, filter.org ?? null, filter.status ?? null],
+      )
+    ).rows;
+  }
+
+  async createManual(orgId: string, dto: any) {
+    const res = await this.pool.query(
+      `INSERT INTO matches (tournament_id, organization_id, match_number, stage, stage_label, group_id,
+                            team_a_id, team_b_id, venue_id, scheduled_start)
+       VALUES ($1,$2,$3, coalesce($4,'league')::fixture_stage, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [dto.tournament_id ?? null, orgId, dto.match_number ?? null, dto.stage ?? null, dto.stage_label ?? null,
+       dto.group_id ?? null, dto.team_a_id, dto.team_b_id, dto.venue_id ?? null, dto.scheduled_start],
+    );
+    return res.rows[0];
+  }
+
+  async get(id: string) {
+    const m = (
+      await this.pool.query(
+        `SELECT m.*, ta.name AS team_a_name, ta.short_name AS team_a_short, ta.logo_url AS team_a_logo,
+                tb.name AS team_b_name, tb.short_name AS team_b_short, tb.logo_url AS team_b_logo,
+                v.name AS venue_name, t.name AS tournament_name, t.slug AS tournament_slug
+         FROM matches m
+         JOIN teams ta ON ta.id = m.team_a_id
+         JOIN teams tb ON tb.id = m.team_b_id
+         LEFT JOIN venues v ON v.id = m.venue_id
+         LEFT JOIN tournaments t ON t.id = m.tournament_id
+         WHERE m.id = $1`,
+        [id],
+      )
+    ).rows[0];
+    if (!m) throw new NotFoundException('Match not found');
+    m.innings = (
+      await this.pool.query(
+        `SELECT i.*, bt.short_name AS batting_team, bw.short_name AS bowling_team
+         FROM innings i JOIN teams bt ON bt.id = i.batting_team_id JOIN teams bw ON bw.id = i.bowling_team_id
+         WHERE i.match_id = $1 ORDER BY i.seq`,
+        [id],
+      )
+    ).rows;
+    // Super-over lineage: tied parents expose their tie-breaker children
+    m.child_matches = (
+      await this.pool.query(
+        `SELECT id, stage_label, status, result_summary, winner_team_id, scheduled_start
+         FROM matches WHERE parent_match_id = $1 ORDER BY scheduled_start`,
+        [id],
+      )
+    ).rows;
+    m.officials = (
+      await this.pool.query(
+        `SELECT mo.duty, o.id, o.full_name, o.official_type
+         FROM match_officials mo JOIN officials o ON o.id = mo.official_id
+         WHERE mo.match_id = $1 ORDER BY mo.duty`,
+        [id],
+      )
+    ).rows;
+    return m;
+  }
+
+  /** Replace the match officials panel (umpires / TV umpire / referee / scorer). */
+  async setOfficials(matchId: string, officials: { official_id: string; duty: string }[]) {
+    const duties = officials.map((o) => o.duty);
+    if (new Set(duties).size !== duties.length) throw new BadRequestException('Duplicate duty assignments');
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`DELETE FROM match_officials WHERE match_id = $1`, [matchId]);
+      for (const o of officials) {
+        await client.query(
+          `INSERT INTO match_officials (match_id, official_id, duty) VALUES ($1,$2,$3)`,
+          [matchId, o.official_id, o.duty],
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+    return { set: officials.length };
+  }
+
+  /**
+   * Substitution (12th man / concussion / impact player). Marks the outgoing
+   * player and activates the incoming one with explicit bat/bowl eligibility.
+   */
+  async substitute(
+    matchId: string,
+    dto: { team_id: string; out_player_id: string; in_player_id: string; reason?: string; can_bat?: boolean; can_bowl?: boolean },
+  ) {
+    const out = await this.pool.query(
+      `UPDATE match_players SET substituted_out_at = now(), is_playing_xi = false
+       WHERE match_id = $1 AND team_id = $2 AND player_id = $3 AND substituted_out_at IS NULL
+       RETURNING id`,
+      [matchId, dto.team_id, dto.out_player_id],
+    );
+    if (out.rowCount === 0) throw new BadRequestException('Outgoing player is not an active member of this match squad');
+    const inRow = await this.pool.query(
+      `INSERT INTO match_players (match_id, team_id, player_id, is_playing_xi, is_twelfth, can_bat, can_bowl,
+                                  substituted_in_at, substitution_reason, replaced_player_id)
+       VALUES ($1,$2,$3, true, false, coalesce($4,true), coalesce($5,true), now(), coalesce($6,'substitute'), $7)
+       ON CONFLICT (match_id, player_id) DO UPDATE SET
+         is_playing_xi = true, can_bat = coalesce($4,true), can_bowl = coalesce($5,true),
+         substituted_in_at = now(), substituted_out_at = NULL,
+         substitution_reason = coalesce($6,'substitute'), replaced_player_id = $7
+       RETURNING *`,
+      [matchId, dto.team_id, dto.in_player_id, dto.can_bat, dto.can_bowl, dto.reason, dto.out_player_id],
+    );
+    return inRow.rows[0];
+  }
+
+  /** Stats tab payload: wagon wheel vectors, partnerships, run-rate series. */
+  async matchStats(matchId: string) {
+    const wagon = (
+      await this.pool.query(
+        `SELECT b.striker_id AS batter_id, p.full_name AS batter, b.wagon, b.runs_batter,
+                b.is_boundary_four, b.is_boundary_six, b.shot_type, i.seq AS innings
+         FROM balls b
+         JOIN innings i ON i.id = b.innings_id
+         JOIN players p ON p.id = b.striker_id
+         WHERE i.match_id = $1 AND NOT b.is_superseded AND b.wagon IS NOT NULL
+         ORDER BY b.seq`,
+        [matchId],
+      )
+    ).rows;
+
+    // Partnerships: replay the ball stream per innings, splitting on wickets
+    const innings = (
+      await this.pool.query(
+        `SELECT i.id, i.seq, tm.short_name AS batting_team FROM innings i
+         JOIN teams tm ON tm.id = i.batting_team_id WHERE i.match_id = $1 ORDER BY i.seq`,
+        [matchId],
+      )
+    ).rows;
+    const partnerships: any[] = [];
+    for (const inn of innings) {
+      const balls = (
+        await this.pool.query(
+          `SELECT b.striker_id, b.non_striker_id, b.runs_batter, b.runs_extras, b.is_legal, b.is_wicket,
+                  ps.full_name AS striker, pn.full_name AS non_striker
+           FROM balls b
+           JOIN players ps ON ps.id = b.striker_id
+           JOIN players pn ON pn.id = b.non_striker_id
+           WHERE b.innings_id = $1 AND NOT b.is_superseded ORDER BY b.seq`,
+          [inn.id],
+        )
+      ).rows;
+      let current: any = null;
+      let wicketNo = 0;
+      for (const b of balls) {
+        const key = [b.striker_id, b.non_striker_id].sort().join('|');
+        if (!current || current.key !== key) {
+          if (current) partnerships.push(current);
+          current = {
+            key, innings: inn.seq, batting_team: inn.batting_team,
+            batters: [b.striker, b.non_striker].sort(), runs: 0, balls: 0,
+            wicket_number: wicketNo + 1, unbeaten: true,
+          };
+        }
+        current.runs += b.runs_batter + b.runs_extras;
+        if (b.is_legal) current.balls += 1;
+        if (b.is_wicket) { wicketNo += 1; current.unbeaten = false; partnerships.push(current); current = null; }
+      }
+      if (current) partnerships.push(current);
+    }
+    partnerships.forEach((p) => delete p.key);
+
+    const runRate = (
+      await this.pool.query(
+        `SELECT i.seq AS innings, os.over_number, os.runs, os.wickets, os.cumulative_runs, os.cumulative_wickets
+         FROM over_summaries os JOIN innings i ON i.id = os.innings_id
+         WHERE i.match_id = $1 ORDER BY i.seq, os.over_number`,
+        [matchId],
+      )
+    ).rows;
+
+    return { wagon_wheel: wagon, partnerships, run_rate: runRate };
+  }
+
+  /** Live state snapshot — Redis-first with Postgres fallback (response carries `source`). */
+  state(id: string) {
+    return this.live.getState(id);
+  }
+
+  /** Last N ball events from the Redis stream (instant UI hydration). */
+  recentBalls(id: string, limit = 30) {
+    return this.live.recentBalls(id, limit);
+  }
+
+  /** Live presence counts (viewers / scorers) from Redis sets. */
+  presence(id: string) {
+    return this.live.presence(id);
+  }
+
+  /** Replace one team's match squad (playing XI + 12th man with bat/bowl toggles). */
+  async setSquad(matchId: string, teamId: string, players: any[]) {
+    const match = (
+      await this.pool.query(`SELECT team_a_id, team_b_id, status FROM matches WHERE id = $1`, [matchId])
+    ).rows[0];
+    if (!match) throw new NotFoundException('Match not found');
+    if (![match.team_a_id, match.team_b_id].includes(teamId)) {
+      throw new BadRequestException('Team is not part of this match');
+    }
+    if (!['scheduled', 'toss'].includes(match.status)) {
+      throw new BadRequestException('Squad can only be set before the match starts');
+    }
+    const xi = players.filter((p) => p.is_playing_xi !== false && !p.is_twelfth);
+    const keepers = xi.filter((p) => p.is_wicket_keeper);
+    if (keepers.length > 1) throw new BadRequestException('Only one wicket-keeper in the XI');
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`DELETE FROM match_players WHERE match_id = $1 AND team_id = $2`, [matchId, teamId]);
+      for (const [i, p] of players.entries()) {
+        await client.query(
+          `INSERT INTO match_players (match_id, team_id, player_id, is_playing_xi, is_twelfth,
+                                      can_bat, can_bowl, is_captain, is_wicket_keeper, batting_order)
+           VALUES ($1,$2,$3, coalesce($4,true), coalesce($5,false), coalesce($6,true), coalesce($7,true),
+                   coalesce($8,false), coalesce($9,false), coalesce($10::smallint, $11::smallint))`,
+          [matchId, teamId, p.player_id, p.is_playing_xi, p.is_twelfth, p.can_bat, p.can_bowl,
+           p.is_captain, p.is_wicket_keeper, p.batting_order ?? null, i + 1],
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+    return this.squads(matchId);
+  }
+
+  async squads(matchId: string) {
+    return (
+      await this.pool.query(
+        `SELECT mp.team_id, tm.short_name AS team, mp.player_id, p.full_name, p.primary_role,
+                mp.is_playing_xi, mp.is_twelfth, mp.can_bat, mp.can_bowl,
+                mp.is_captain, mp.is_wicket_keeper, mp.batting_order
+         FROM match_players mp
+         JOIN players p ON p.id = mp.player_id
+         JOIN teams tm ON tm.id = mp.team_id
+         WHERE mp.match_id = $1
+         ORDER BY mp.team_id, mp.batting_order NULLS LAST`,
+        [matchId],
+      )
+    ).rows;
+  }
+
+  /** Full scorecard: batting + bowling cards per innings, fall of wickets. */
+  async scorecard(matchId: string) {
+    const innings = (
+      await this.pool.query(
+        `SELECT i.*, bt.name AS batting_team, bt.short_name AS batting_short,
+                bw.name AS bowling_team, bw.short_name AS bowling_short
+         FROM innings i
+         JOIN teams bt ON bt.id = i.batting_team_id
+         JOIN teams bw ON bw.id = i.bowling_team_id
+         WHERE i.match_id = $1 ORDER BY i.seq`,
+        [matchId],
+      )
+    ).rows;
+
+    for (const inn of innings) {
+      inn.batting = (
+        await this.pool.query(
+          `SELECT p.id, p.full_name,
+                  count(*) FILTER (WHERE b.is_legal OR b.extra_type = 'no_ball')::int AS balls,
+                  coalesce(sum(b.runs_batter),0)::int AS runs,
+                  count(*) FILTER (WHERE b.is_boundary_four)::int AS fours,
+                  count(*) FILTER (WHERE b.is_boundary_six)::int AS sixes,
+                  bool_or(b.is_wicket AND b.dismissed_player_id = p.id) AS is_out,
+                  max(b.wicket_type::text) FILTER (WHERE b.dismissed_player_id = p.id) AS dismissal
+           FROM balls b JOIN players p ON p.id = b.striker_id
+           WHERE b.innings_id = $1 AND NOT b.is_superseded
+           GROUP BY p.id, p.full_name
+           ORDER BY min(b.seq)`,
+          [inn.id],
+        )
+      ).rows;
+      inn.bowling = (
+        await this.pool.query(
+          `SELECT p.id, p.full_name,
+                  count(*) FILTER (WHERE b.is_legal)::int AS legal_balls,
+                  coalesce(sum(b.runs_batter + CASE WHEN b.extra_type IN ('wide','no_ball') THEN b.runs_extras ELSE 0 END),0)::int AS runs_conceded,
+                  count(*) FILTER (WHERE b.is_wicket AND b.wicket_type NOT IN ('run_out','retired_hurt','retired_out','obstructing_field','timed_out'))::int AS wickets
+           FROM balls b JOIN players p ON p.id = b.bowler_id
+           WHERE b.innings_id = $1 AND NOT b.is_superseded
+           GROUP BY p.id, p.full_name
+           ORDER BY min(b.seq)`,
+          [inn.id],
+        )
+      ).rows;
+      inn.fall_of_wickets = (
+        await this.pool.query(
+          `SELECT b.over_number, b.ball_in_over, p.full_name AS batter, b.wicket_type,
+                  (SELECT count(*)::int FROM balls b3
+                   WHERE b3.innings_id = b.innings_id AND b3.seq <= b.seq AND b3.is_wicket AND NOT b3.is_superseded) AS wicket_number,
+                  (SELECT coalesce(sum(b2.runs_batter + b2.runs_extras),0)::int FROM balls b2
+                   WHERE b2.innings_id = b.innings_id AND b2.seq <= b.seq AND NOT b2.is_superseded) AS score_at
+           FROM balls b
+           JOIN players p ON p.id = b.dismissed_player_id
+           WHERE b.innings_id = $1 AND b.is_wicket AND NOT b.is_superseded
+           ORDER BY b.seq`,
+          [inn.id],
+        )
+      ).rows;
+    }
+    return innings;
+  }
+
+  /** Over-by-over data for Manhattan / over comparison. */
+  async overs(matchId: string) {
+    return (
+      await this.pool.query(
+        `SELECT i.seq AS innings, tm.short_name AS batting_team, os.over_number, os.runs, os.wickets,
+                os.extras, os.is_maiden, os.cumulative_runs, os.cumulative_wickets, p.full_name AS bowler
+         FROM over_summaries os
+         JOIN innings i ON i.id = os.innings_id
+         JOIN teams tm ON tm.id = i.batting_team_id
+         JOIN players p ON p.id = os.bowler_id
+         WHERE i.match_id = $1
+         ORDER BY i.seq, os.over_number`,
+        [matchId],
+      )
+    ).rows;
+  }
+
+  async commentary(matchId: string, limit = 50, before?: string) {
+    return (
+      await this.pool.query(
+        `SELECT c.id, c.body, c.source, c.is_highlight, c.created_at, u.full_name AS author,
+                b.over_number, b.ball_in_over
+         FROM commentary_entries c
+         LEFT JOIN users u ON u.id = c.author_id
+         LEFT JOIN balls b ON b.id = c.ball_id
+         WHERE c.match_id = $1 AND ($3::timestamptz IS NULL OR c.created_at < $3)
+         ORDER BY c.created_at DESC LIMIT $2`,
+        [matchId, Math.min(limit, 200), before ?? null],
+      )
+    ).rows;
+  }
+
+  async addCommentary(matchId: string, userId: string, dto: { body: string; is_highlight?: boolean; ball_id?: string }) {
+    const res = await this.pool.query(
+      `INSERT INTO commentary_entries (match_id, author_id, source, body, is_highlight, ball_id,
+                                       innings_id)
+       VALUES ($1, $2, 'manual', $3, coalesce($4,false), $5,
+               (SELECT innings_id FROM balls WHERE id = $5))
+       RETURNING *`,
+      [matchId, userId, dto.body, dto.is_highlight, dto.ball_id ?? null],
+    );
+    return res.rows[0];
+  }
+
+  async mvp(matchId: string) {
+    return (
+      await this.pool.query(
+        `SELECT mmp.*, p.full_name, tm.short_name AS team
+         FROM match_mvp_points mmp
+         JOIN players p ON p.id = mmp.player_id
+         JOIN player_match_stats pms ON pms.match_id = mmp.match_id AND pms.player_id = mmp.player_id
+         JOIN teams tm ON tm.id = pms.team_id
+         WHERE mmp.match_id = $1 ORDER BY mmp.total_points DESC`,
+        [matchId],
+      )
+    ).rows;
+  }
+
+  /** Grant match-scoped scorer access to a user. */
+  async assignScorer(matchId: string, dto: { user_id: string; expires_at?: string }, grantedBy: string) {
+    await this.pool.query(
+      `INSERT INTO user_role_assignments (user_id, role_id, match_id, granted_by, expires_at)
+       SELECT $1, id, $2, $3, $4 FROM roles WHERE slug = 'scorer' AND organization_id IS NULL
+       ON CONFLICT DO NOTHING`,
+      [dto.user_id, matchId, grantedBy, dto.expires_at ?? null],
+    );
+    return { assigned: true };
+  }
+}

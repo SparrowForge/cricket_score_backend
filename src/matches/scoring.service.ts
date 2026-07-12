@@ -1,0 +1,964 @@
+import {
+  BadRequestException, ConflictException, Inject, Injectable, NotFoundException,
+} from '@nestjs/common';
+import { Pool, PoolClient } from 'pg';
+import { PG_POOL } from '../database/database.module';
+import { SaasService } from '../saas/saas.service';
+import { deepMerge } from './matches.service';
+import { LiveStateService } from './live-state.service';
+import { applyBall, BallEvent, FormatRules, LiveInningsState, SideEffect } from './rules-engine';
+import { StatsService } from './stats.service';
+
+/**
+ * Scoring engine over Postgres.
+ * Concurrency: the match row is SELECT … FOR UPDATE for every mutation, and
+ * clients pass expected_seq (optimistic check) + client_event_id (idempotency),
+ * so duplicate taps, retries and stale scorers are all safe.
+ * Live state lives in matches.live_state (polled via GET /matches/:id/state).
+ */
+@Injectable()
+export class ScoringService {
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    private readonly stats: StatsService,
+    private readonly live: LiveStateService,
+    private readonly saas: SaasService,
+  ) {}
+
+  // ------------------------------------------------------------------ toss
+  async toss(matchId: string, dto: { winner_team_id: string; decision: 'bat' | 'bowl' }) {
+    const out = await this.withMatch(matchId, async (client, match) => {
+      if (match.status !== 'scheduled') throw new BadRequestException(`Toss already done (status: ${match.status})`);
+      await this.saas.assertQuota(match.organization_id, 'max_concurrent_matches');
+      if (![match.team_a_id, match.team_b_id].includes(dto.winner_team_id)) {
+        throw new BadRequestException('Toss winner is not part of this match');
+      }
+
+      // Freeze rules: preset snapshot (super-over children) <- format rules <- tournament overrides
+      let rules: FormatRules;
+      if (match.rules_snapshot) {
+        rules = match.rules_snapshot;
+      } else if (match.tournament_id) {
+        const t = (
+          await client.query(
+            `SELECT f.rules, t.rule_overrides FROM tournaments t
+             JOIN match_formats f ON f.id = t.format_id WHERE t.id = $1`,
+            [match.tournament_id],
+          )
+        ).rows[0];
+        rules = deepMerge(t.rules, t.rule_overrides);
+      } else {
+        rules = (await client.query(`SELECT rules FROM match_formats WHERE slug = 't20' AND is_builtin`)).rows[0].rules;
+      }
+
+      const battingFirst =
+        dto.decision === 'bat'
+          ? dto.winner_team_id
+          : dto.winner_team_id === match.team_a_id ? match.team_b_id : match.team_a_id;
+      const bowlingFirst = battingFirst === match.team_a_id ? match.team_b_id : match.team_a_id;
+
+      const innings = (
+        await client.query(
+          `INSERT INTO innings (match_id, seq, batting_team_id, bowling_team_id, status, max_overs)
+           VALUES ($1, 1, $2, $3, 'not_started', $4) RETURNING id`,
+          [matchId, battingFirst, bowlingFirst, rules.overs_per_innings],
+        )
+      ).rows[0];
+
+      const liveState = {
+        innings_id: innings.id,
+        innings_seq: 1,
+        engine: null,
+        batters: {}, bowlers: {}, this_over: [], over_bowler_runs: 0,
+        pending_new_batter: null,
+        summary: await this.summaryShell(client, battingFirst, null),
+      };
+      await client.query(
+        `UPDATE matches SET status = 'toss', toss_winner_id = $2, toss_decision = $3,
+                rules_snapshot = $4, live_state = $5, actual_start = now() WHERE id = $1`,
+        [matchId, dto.winner_team_id, dto.decision, JSON.stringify(rules), JSON.stringify(liveState)],
+      );
+      return { status: 'toss', innings_id: innings.id, rules_snapshot: rules };
+    });
+    await this.live.syncAndPublish(matchId, 'status', { transition: 'toss' });
+    return out;
+  }
+
+  // ------------------------------------------------------------ open innings
+  async openers(matchId: string, dto: { striker_id: string; non_striker_id: string; bowler_id: string }) {
+    const out = await this.withMatch(matchId, async (client, match) => {
+      if (!['toss', 'innings_break'].includes(match.status)) {
+        throw new BadRequestException(`Cannot set openers now (status: ${match.status})`);
+      }
+      const ls = match.live_state;
+      if (ls?.follow_on_available) {
+        throw new BadRequestException('Follow-on decision pending — POST /matches/:id/follow-on first');
+      }
+      if (!ls?.innings_id) throw new BadRequestException('No innings awaiting openers');
+      const rules: FormatRules = match.rules_snapshot;
+      await this.assertInXI(client, matchId, [dto.striker_id, dto.non_striker_id], 'bat');
+      await this.assertInXI(client, matchId, [dto.bowler_id], 'bowl');
+      if (dto.striker_id === dto.non_striker_id) throw new BadRequestException('Openers must be two different players');
+
+      const innings = (
+        await client.query(`SELECT * FROM innings WHERE id = $1`, [ls.innings_id])
+      ).rows[0];
+
+      const engine: LiveInningsState = {
+        seq: Number(match.live_state_seq),
+        totalRuns: 0, totalWickets: 0, legalBalls: 0,
+        maxOvers: innings.max_overs !== null ? Number(innings.max_overs) : null,
+        target: innings.target_runs,
+        freeHitPending: false, currentOverBalls: 0, lastOverBowlerId: null,
+        bowlerLegalBalls: {}, strikerId: dto.striker_id, nonStrikerId: dto.non_striker_id,
+        battersRetiredHurt: [],
+      };
+      ls.engine = engine;
+      ls.current_bowler = dto.bowler_id;
+      ls.batters = {
+        [dto.striker_id]: await this.batterCard(client, dto.striker_id),
+        [dto.non_striker_id]: await this.batterCard(client, dto.non_striker_id),
+      };
+      ls.bowlers = { [dto.bowler_id]: await this.bowlerCard(client, dto.bowler_id) };
+
+      await client.query(
+        `UPDATE innings SET status = 'in_progress', started_at = now() WHERE id = $1`,
+        [ls.innings_id],
+      );
+      await client.query(
+        `UPDATE matches SET status = 'live', live_state = $2 WHERE id = $1`,
+        [matchId, JSON.stringify(ls)],
+      );
+      return { status: 'live', state: ls };
+    });
+    await this.live.syncAndPublish(matchId, 'status', { transition: 'live' });
+    return out;
+  }
+
+  // ------------------------------------------------------------------ ball
+  async ball(matchId: string, userId: string, dto: any) {
+    const res: any = await this.withMatch(matchId, async (client, match) => {
+      if (match.status !== 'live') throw new BadRequestException(`Match is not live (status: ${match.status})`);
+      const ls = match.live_state;
+      const rules: FormatRules = match.rules_snapshot;
+      if (!ls?.engine) throw new BadRequestException('Openers not set');
+      if (ls.pending_new_batter) throw new ConflictException({ code: 'NEW_BATTER_REQUIRED', dismissed: ls.pending_new_batter });
+
+      // Idempotency
+      const dup = await client.query(
+        `SELECT b.seq FROM balls b WHERE b.innings_id = $1 AND b.client_event_id = $2`,
+        [ls.innings_id, dto.client_event_id],
+      );
+      if (dup.rowCount! > 0) return { code: 'DUPLICATE', seq: dup.rows[0].seq };
+
+      // Optimistic concurrency
+      if (dto.expected_seq !== undefined && dto.expected_seq !== Number(match.live_state_seq)) {
+        throw new ConflictException({ code: 'SEQ_CONFLICT', current_seq: Number(match.live_state_seq) });
+      }
+
+      const bowlerId = dto.bowler_id ?? ls.current_bowler;
+      const ev: BallEvent = {
+        strikerId: ls.engine.strikerId,
+        nonStrikerId: ls.engine.nonStrikerId,
+        bowlerId,
+        runsBatter: dto.runs_batter ?? 0,
+        extraType: dto.extra_type ?? null,
+        runsExtras: dto.runs_extras ?? 0,
+        wicket: dto.wicket
+          ? { type: dto.wicket.type, dismissedPlayerId: dto.wicket.dismissed_player_id ?? ls.engine.strikerId, fielderId: dto.wicket.fielder_id }
+          : null,
+      };
+
+      const pre: LiveInningsState = ls.engine;
+      const result = applyBall(pre, ev, rules);
+      if (!result.ok) throw new ConflictException({ code: result.code, message: result.message });
+      const post = result.next;
+
+      // Total extras actually scored (automatic penalty + runs run)
+      const isLegal = ev.extraType !== 'wide' && ev.extraType !== 'no_ball';
+      let totalExtras = ev.runsExtras;
+      if (ev.extraType === 'wide') totalExtras += rules.wide?.runs ?? 1;
+      if (ev.extraType === 'no_ball') totalExtras += rules.no_ball?.runs ?? 1;
+
+      const overNumber = Math.floor(pre.legalBalls / rules.balls_per_over);
+      const ballInOver = pre.currentOverBalls + 1;
+      const isFour = dto.is_boundary_four ?? (ev.runsBatter === 4);
+      const isSix = dto.is_boundary_six ?? (ev.runsBatter === 6);
+
+      const inserted = await client.query(
+        `INSERT INTO balls (innings_id, seq, over_number, ball_in_over, striker_id, non_striker_id, bowler_id,
+                            is_legal, runs_batter, runs_extras, extra_type, is_boundary_four, is_boundary_six,
+                            is_free_hit, is_wicket, wicket_type, dismissed_player_id, fielder_id,
+                            wagon, pitch, shot_type, client_event_id, scored_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+         RETURNING id, seq`,
+        [ls.innings_id, post.seq, overNumber, ballInOver, ev.strikerId, ev.nonStrikerId, bowlerId,
+         isLegal, ev.runsBatter, totalExtras, ev.extraType, isFour, isSix,
+         pre.freeHitPending, !!ev.wicket, ev.wicket?.type ?? null, ev.wicket?.dismissedPlayerId ?? null,
+         ev.wicket?.fielderId ?? null,
+         dto.wagon ? JSON.stringify(dto.wagon) : null, dto.pitch ? JSON.stringify(dto.pitch) : null,
+         dto.shot_type ?? null, dto.client_event_id, userId],
+      );
+
+      // Innings counters
+      await client.query(
+        `UPDATE innings SET total_runs = $2, total_wickets = $3, legal_balls = $4,
+                extras_wides = extras_wides + $5, extras_no_balls = extras_no_balls + $6,
+                extras_byes = extras_byes + $7, extras_leg_byes = extras_leg_byes + $8
+         WHERE id = $1`,
+        [ls.innings_id, post.totalRuns, post.totalWickets, post.legalBalls,
+         ev.extraType === 'wide' ? totalExtras : 0,
+         ev.extraType === 'no_ball' ? rules.no_ball?.runs ?? 1 : 0,
+         ev.extraType === 'bye' ? ev.runsExtras : 0,
+         ev.extraType === 'leg_bye' ? ev.runsExtras : 0],
+      );
+
+      // Over summary (bowler charged with batter runs + wide/no-ball extras)
+      const bowlerRuns = ev.runsBatter + (['wide', 'no_ball'].includes(ev.extraType ?? '') ? totalExtras : 0);
+      await client.query(
+        `INSERT INTO over_summaries (innings_id, over_number, bowler_id, runs, wickets, extras,
+                                     cumulative_runs, cumulative_wickets)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (innings_id, over_number) DO UPDATE SET
+           runs = over_summaries.runs + excluded.runs,
+           wickets = over_summaries.wickets + excluded.wickets,
+           extras = over_summaries.extras + excluded.extras,
+           cumulative_runs = excluded.cumulative_runs,
+           cumulative_wickets = excluded.cumulative_wickets`,
+        [ls.innings_id, overNumber, bowlerId, ev.runsBatter + totalExtras, ev.wicket ? 1 : 0, totalExtras,
+         post.totalRuns, post.totalWickets],
+      );
+
+      // ---- Update live display state ----
+      ls.engine = post;
+      const bat = (ls.batters[ev.strikerId] ??= await this.batterCard(client, ev.strikerId));
+      if (isLegal || ev.extraType === 'no_ball') {
+        if (ev.extraType !== 'wide') { bat.balls += 1; }
+        bat.runs += ev.runsBatter;
+        if (isFour) bat.fours += 1;
+        if (isSix) bat.sixes += 1;
+      }
+      const bowl = (ls.bowlers[bowlerId] ??= await this.bowlerCard(client, bowlerId));
+      if (isLegal) bowl.legal_balls += 1;
+      bowl.runs += bowlerRuns;
+      ls.over_bowler_runs = (overNumber === Math.floor(post.legalBalls / rules.balls_per_over) || !isLegal)
+        ? (ls.over_bowler_runs ?? 0) + bowlerRuns
+        : 0; // reset handled at over_complete below
+      if (ev.wicket && !['run_out', 'retired_hurt', 'retired_out', 'obstructing_field', 'timed_out'].includes(ev.wicket.type)) {
+        bowl.wickets += 1;
+      }
+      ls.this_over.push(this.ballLabel(ev, isFour, isSix));
+      ls.current_bowler = bowlerId;
+
+      // ---- Effects ----
+      let matchCompleted = false;
+      for (const ef of result.effects) {
+        if (ef.kind === 'over_complete') {
+          if ((ls.over_bowler_runs ?? 0) - bowlerRuns === 0 && bowlerRuns === 0) {
+            await client.query(
+              `UPDATE over_summaries SET is_maiden = (runs = 0) WHERE innings_id = $1 AND over_number = $2`,
+              [ls.innings_id, ef.overNumber],
+            );
+            const maiden = (await client.query(
+              `SELECT is_maiden FROM over_summaries WHERE innings_id = $1 AND over_number = $2`,
+              [ls.innings_id, ef.overNumber])).rows[0];
+            if (maiden?.is_maiden) bowl.maidens += 1;
+          }
+          ls.this_over = [];
+          ls.over_bowler_runs = 0;
+        }
+        if (ef.kind === 'new_batter_required') {
+          const stillBatting = post.totalWickets < rules.wickets_to_fall;
+          const inningsEnding = result.effects.some((e) => e.kind === 'innings_complete');
+          if (stillBatting && !inningsEnding) ls.pending_new_batter = ef.dismissedId;
+        }
+        if (ef.kind === 'innings_complete') {
+          await this.completeInnings(client, match, ls, rules, ef.reason);
+        }
+        if (ef.kind === 'match_complete' || ef.kind === 'super_over_required') {
+          matchCompleted = true;
+          await this.completeMatch(client, match, ls, rules, ef);
+        }
+      }
+
+      ls.summary = await this.buildSummary(client, ls, rules);
+
+      await client.query(
+        `UPDATE matches SET live_state = $2, live_state_seq = $3 WHERE id = $1`,
+        [matchId, JSON.stringify(ls), post.seq],
+      );
+
+      return {
+        seq: post.seq, ball_id: inserted.rows[0].id,
+        effects: result.effects.map((e) => e.kind), state: ls,
+        _completed: matchCompleted, _parent: match.parent_match_id,
+        _ball: {
+          seq: post.seq, over: overNumber, ball_in_over: ballInOver,
+          label: this.ballLabel(ev, isFour, isSix),
+          runs_batter: ev.runsBatter, extras: totalExtras, extra_type: ev.extraType,
+          wicket: ev.wicket?.type ?? null, score: `${post.totalRuns}/${post.totalWickets}`,
+        },
+      };
+    });
+
+    // Duplicate replays skip Redis — nothing changed
+    if (res.code === 'DUPLICATE') return res;
+
+    // ---- Post-commit: Redis write-through + real-time fan-out ----
+    await this.live.pushBall(matchId, res._ball);
+    await this.live.syncAndPublish(matchId, 'ball', { seq: res.seq, effects: res.effects, delta: res._ball });
+
+    if (res._completed) {
+      await this.live.expireMatch(matchId);
+      // Super-over children propagate their result onto the parent match
+      if (res._parent) await this.live.syncAndPublish(res._parent, 'status', { transition: 'super_over_result' });
+      // Stats run after the scoring TX commits
+      setImmediate(() => this.stats.finalizeMatch(matchId).catch((e) => console.error('stats finalize failed:', e.message)));
+    }
+
+    const { _completed, _parent, _ball, ...pub } = res;
+    return pub;
+  }
+
+  // ------------------------------------------------------------- new batter
+  async newBatter(matchId: string, dto: { player_id: string }) {
+    const out = await this.withMatch(matchId, async (client, match) => {
+      const ls = match.live_state;
+      if (!ls?.pending_new_batter) throw new BadRequestException('No new batter required');
+      await this.assertInXI(client, matchId, [dto.player_id], 'bat');
+      if (ls.batters[dto.player_id]?.out) throw new BadRequestException('Player is already out');
+
+      const dismissed = ls.pending_new_batter;
+      if (ls.engine.strikerId === dismissed) ls.engine.strikerId = dto.player_id;
+      else if (ls.engine.nonStrikerId === dismissed) ls.engine.nonStrikerId = dto.player_id;
+      else ls.engine.strikerId = dto.player_id; // safety net
+
+      if (ls.batters[dismissed]) ls.batters[dismissed].out = true;
+      ls.batters[dto.player_id] ??= await this.batterCard(client, dto.player_id);
+      ls.pending_new_batter = null;
+
+      await client.query(`UPDATE matches SET live_state = $2 WHERE id = $1`, [matchId, JSON.stringify(ls)]);
+      return { state: ls };
+    });
+    await this.live.syncAndPublish(matchId, 'status', { transition: 'new_batter' });
+    return out;
+  }
+
+  // ------------------------------------------------------------------ undo
+  /** Supersedes the last ball and rebuilds the innings by replaying the event stream. */
+  async undoLast(matchId: string) {
+    const out = await this.withMatch(matchId, async (client, match) => {
+      const ls = match.live_state;
+      if (!ls?.innings_id) throw new BadRequestException('Nothing to undo');
+      const last = (
+        await client.query(
+          `SELECT id FROM balls WHERE innings_id = $1 AND NOT is_superseded ORDER BY seq DESC LIMIT 1`,
+          [ls.innings_id],
+        )
+      ).rows[0];
+      if (!last) throw new BadRequestException('No balls to undo');
+      await client.query(`UPDATE balls SET is_superseded = true WHERE id = $1`, [last.id]);
+      const rebuilt = await this.replayInnings(client, match, ls.innings_id);
+      return { undone: last.id, state: rebuilt };
+    });
+    // Corrections tell clients to discard local state and adopt the snapshot
+    await this.live.syncAndPublish(matchId, 'correction', { undone: out.undone });
+    return out;
+  }
+
+  // ------------------------------------------------- manual innings control
+  async closeInningsManual(matchId: string, reason: 'declared' | 'overs' | 'all_out' | 'forfeited') {
+    const out = await this.withMatch(matchId, async (client, match) => {
+      const ls = match.live_state;
+      const rules: FormatRules = match.rules_snapshot;
+      if (!ls?.innings_id) throw new BadRequestException('No active innings');
+      if (reason === 'declared' && !rules.declaration_allowed) {
+        throw new BadRequestException('Declaration is not allowed in this format');
+      }
+      await this.completeInnings(client, match, ls, rules, reason);
+      if (ls.innings_id) ls.summary = await this.buildSummary(client, ls, rules);
+      await client.query(`UPDATE matches SET live_state = $2 WHERE id = $1`, [matchId, JSON.stringify(ls)]);
+      return { state: ls };
+    });
+    await this.live.syncAndPublish(matchId, 'status', { transition: 'innings_closed' });
+    return out;
+  }
+
+  // ---------------------------------------------------- follow-on (Tests)
+  /**
+   * After the 2nd innings of a 2-innings-per-side match, if the side batting
+   * first leads by ≥ rules.follow_on.deficit, the scorer must decide:
+   * enforce (opponent bats again, is_follow_on=true) or bat normally.
+   */
+  async followOn(matchId: string, dto: { enforce: boolean }) {
+    const out = await this.withMatch(matchId, async (client, match) => {
+      const ls = match.live_state;
+      const rules: FormatRules = match.rules_snapshot;
+      if (!ls?.follow_on_available) throw new BadRequestException('No follow-on decision is pending');
+
+      const done = (
+        await client.query(
+          `SELECT seq, batting_team_id, total_runs FROM innings WHERE match_id = $1 ORDER BY seq`,
+          [matchId],
+        )
+      ).rows;
+      const decision = { ...ls.follow_on_available, enforced: dto.enforce };
+      ls.follow_on_available = null;
+      ls.follow_on_decision = decision;
+      await this.createNextInnings(client, match, ls, rules, done, dto.enforce);
+      await client.query(`UPDATE matches SET live_state = $2 WHERE id = $1`, [matchId, JSON.stringify(ls)]);
+      return { follow_on: decision, state: ls };
+    });
+    await this.live.syncAndPublish(matchId, 'status', { transition: 'follow_on_decision' });
+    return out;
+  }
+
+  // ------------------------------------------------------------ super over
+  /**
+   * Tied match → create a linked child match (parent_match_id) with super-over
+   * rules: 1 over per side, 2 wickets, 1 over per bowler. The child is scored
+   * through the normal toss→openers→balls flow; on completion its result is
+   * written back onto the parent.
+   */
+  async createSuperOver(matchId: string) {
+    const child = await this.withMatch(matchId, async (client, match) => {
+      if (match.status !== 'completed' || match.result_type !== 'tie') {
+        throw new BadRequestException('A super over can only follow a tied, completed match');
+      }
+      const rules: FormatRules = match.rules_snapshot;
+      if (!rules?.super_over?.enabled) throw new BadRequestException('Super over is not enabled in this format');
+
+      const played = (
+        await client.query(`SELECT count(*)::int AS n FROM matches WHERE parent_match_id = $1`, [matchId])
+      ).rows[0].n;
+      const maxRepeats = rules.super_over.max_repeats ?? 1;
+      if (played >= maxRepeats) {
+        throw new BadRequestException(`Maximum ${maxRepeats} super over(s) already played — result stands as a tie`);
+      }
+
+      const bpo = rules.balls_per_over ?? 6;
+      const soBalls = rules.super_over.balls ?? 6;
+      const soRules: FormatRules = {
+        ...rules,
+        innings_per_side: 1,
+        overs_per_innings: Math.max(1, Math.round(soBalls / bpo)),
+        max_overs_per_bowler: 1,
+        wickets_to_fall: 2,
+        powerplays: [],
+        dls: { enabled: false },
+        follow_on: { enabled: false },
+        declaration_allowed: false,
+      };
+
+      const row = (
+        await client.query(
+          `INSERT INTO matches (tournament_id, organization_id, stage, stage_label, team_a_id, team_b_id,
+                                venue_id, scheduled_start, status, is_super_over, parent_match_id, rules_snapshot)
+           VALUES (NULL, $1, 'custom', $2, $3, $4, $5, now(), 'scheduled', true, $6, $7)
+           RETURNING id, stage_label, status, team_a_id, team_b_id, parent_match_id`,
+          [match.organization_id, played > 0 ? `Super Over ${played + 1}` : 'Super Over',
+           match.team_a_id, match.team_b_id, match.venue_id, matchId, JSON.stringify(soRules)],
+        )
+      ).rows[0];
+      return row;
+    });
+    await this.live.syncAndPublish(matchId, 'status', { transition: 'super_over_created', child_match_id: child.id });
+    return child;
+  }
+
+  // -------------------------------------------- rain interruptions / DLS
+  /** Pause play (rain / bad light / wet outfield). Records the state at stoppage. */
+  async startInterruption(matchId: string, dto: { reason: string }) {
+    const out = await this.withMatch(matchId, async (client, match) => {
+      if (match.status !== 'live') throw new BadRequestException(`Match is not live (status: ${match.status})`);
+      const ls = match.live_state;
+      const row = (
+        await client.query(
+          `INSERT INTO match_interruptions (match_id, innings_id, reason, started_at, state_at_stop)
+           VALUES ($1, $2, $3, now(), $4) RETURNING id, reason, started_at`,
+          [matchId, ls.innings_id, dto.reason, JSON.stringify(ls.summary ?? {})],
+        )
+      ).rows[0];
+      await client.query(`UPDATE matches SET status = 'rain_delay' WHERE id = $1`, [matchId]);
+      return { interruption: row, status: 'rain_delay' };
+    });
+    await this.live.syncAndPublish(matchId, 'status', { transition: 'interruption_started' });
+    return out;
+  }
+
+  /**
+   * Resume play. Optionally apply a rain revision (DLS or any agreed method):
+   * revised_max_overs shrinks the innings; revised_target replaces the chase target.
+   * The revision is recorded in matches.dls_info for the scorecard.
+   */
+  async resumeInterruption(
+    matchId: string,
+    dto: { overs_lost?: number; revised_max_overs?: number; revised_target?: number; method?: string },
+  ) {
+    const out = await this.withMatch(matchId, async (client, match) => {
+      if (match.status !== 'rain_delay') throw new BadRequestException(`No interruption in progress (status: ${match.status})`);
+      const ls = match.live_state;
+      const rules: FormatRules = match.rules_snapshot;
+
+      await client.query(
+        `UPDATE match_interruptions SET ended_at = now(), overs_lost = $2
+         WHERE match_id = $1 AND ended_at IS NULL`,
+        [matchId, dto.overs_lost ?? null],
+      );
+
+      const applyingRevision = dto.revised_max_overs !== undefined || dto.revised_target !== undefined;
+      if (applyingRevision && ls.innings_id) {
+        if (dto.revised_max_overs !== undefined) {
+          const bowled = ls.engine ? Math.floor(ls.engine.legalBalls / (rules.balls_per_over ?? 6)) : 0;
+          if (dto.revised_max_overs <= bowled) {
+            throw new BadRequestException(`Revised overs (${dto.revised_max_overs}) must exceed overs already bowled (${bowled})`);
+          }
+          if (rules.dls?.min_overs_per_side && dto.revised_max_overs < rules.dls.min_overs_per_side) {
+            throw new BadRequestException(`Format requires at least ${rules.dls.min_overs_per_side} overs per side`);
+          }
+          await client.query(`UPDATE innings SET max_overs = $2 WHERE id = $1`, [ls.innings_id, dto.revised_max_overs]);
+          if (ls.engine) ls.engine.maxOvers = dto.revised_max_overs;
+        }
+        if (dto.revised_target !== undefined) {
+          await client.query(`UPDATE innings SET target_runs = $2 WHERE id = $1`, [ls.innings_id, dto.revised_target]);
+          if (ls.engine) ls.engine.target = dto.revised_target;
+        }
+        const dlsInfo = {
+          method: dto.method ?? rules.dls?.method ?? 'manual',
+          revised_overs: dto.revised_max_overs ?? null,
+          revised_target: dto.revised_target ?? null,
+          applied_at_innings: ls.innings_seq,
+        };
+        await client.query(
+          `UPDATE matches SET dls_applied = true, dls_info = coalesce(dls_info, '[]'::jsonb) || $2::jsonb WHERE id = $1`,
+          [matchId, JSON.stringify([dlsInfo])],
+        );
+        ls.dls = dlsInfo;
+      }
+
+      ls.summary = ls.innings_id ? await this.buildSummary(client, ls, rules) : ls.summary;
+      await client.query(`UPDATE matches SET status = 'live', live_state = $2 WHERE id = $1`, [matchId, JSON.stringify(ls)]);
+      return { status: 'live', dls: ls.dls ?? null, state: ls };
+    });
+    await this.live.syncAndPublish(matchId, 'status', { transition: 'play_resumed' });
+    return out;
+  }
+
+  // ------------------------------------------------- offline batch sync
+  /**
+   * Offline scorer sync: applies queued events in order, deduping on
+   * client_event_id. Stops at the first conflict so the device can rebase
+   * against the returned authoritative state.
+   */
+  async ballBatch(matchId: string, userId: string, items: any[]) {
+    const results: any[] = [];
+    for (const item of items) {
+      try {
+        const r = await this.ball(matchId, userId, { ...item, expected_seq: undefined });
+        results.push({
+          client_event_id: item.client_event_id,
+          status: r.code === 'DUPLICATE' ? 'duplicate' : 'applied',
+          seq: r.seq,
+        });
+      } catch (err: any) {
+        results.push({
+          client_event_id: item.client_event_id,
+          status: 'conflict',
+          error: err.response ?? { message: err.message },
+        });
+        break;
+      }
+    }
+    return { results, state: await this.live.getState(matchId) };
+  }
+
+  /** Finalize: set POM, force result for abandoned matches, (re)build stats. */
+  async finalize(matchId: string, dto: { player_of_match_id?: string; result_type?: string; result_summary?: string }) {
+    await this.withMatch(matchId, async (client, match) => {
+      if (dto.result_type) {
+        await client.query(
+          `UPDATE matches SET status = CASE WHEN $2 IN ('abandoned','no_result') THEN $2::match_status ELSE 'completed'::match_status END,
+                  result_type = $2, result_summary = coalesce($3, result_summary), completed_at = coalesce(completed_at, now())
+           WHERE id = $1`,
+          [matchId, dto.result_type, dto.result_summary ?? null],
+        );
+      }
+      if (dto.player_of_match_id) {
+        await client.query(`UPDATE matches SET player_of_match_id = $2 WHERE id = $1`, [matchId, dto.player_of_match_id]);
+      }
+    });
+    await this.stats.finalizeMatch(matchId);
+    await this.live.syncAndPublish(matchId, 'status', { transition: 'finalized' });
+    await this.live.expireMatch(matchId);
+    return { finalized: true };
+  }
+
+  // ================= internals =================
+
+  private async completeInnings(client: PoolClient, match: any, ls: any, rules: FormatRules, reason: string) {
+    const status = reason === 'declared' ? 'declared' : reason === 'forfeited' ? 'forfeited' : 'completed';
+    await client.query(
+      `UPDATE innings SET status = $2, ended_at = now() WHERE id = $1`,
+      [ls.innings_id, status],
+    );
+    const totalInnings = (rules.innings_per_side ?? 1) * 2;
+    if (ls.innings_seq >= totalInnings) return; // match end handled by match_complete effect
+
+    const done = (
+      await client.query(
+        `SELECT i.seq, i.batting_team_id, i.total_runs FROM innings i WHERE i.match_id = $1 ORDER BY i.seq`,
+        [match.id],
+      )
+    ).rows;
+
+    // Follow-on decision point (Tests): after the 2nd innings, if the side that
+    // batted first leads by at least the configured deficit, pause for the call.
+    if ((rules.innings_per_side ?? 1) === 2 && ls.innings_seq === 2 && rules.follow_on?.enabled) {
+      const lead = done[0].total_runs - done[1].total_runs;
+      const deficit = rules.follow_on.deficit ?? 200;
+      if (lead >= deficit) {
+        ls.follow_on_available = { lead, deficit, decision_team_id: done[0].batting_team_id };
+        ls.innings_id = null; ls.engine = null;
+        ls.batters = {}; ls.bowlers = {}; ls.this_over = [];
+        ls.pending_new_batter = null; ls.current_bowler = null;
+        await client.query(`UPDATE matches SET status = 'innings_break' WHERE id = $1`, [match.id]);
+        match.status = 'innings_break';
+        return; // POST /matches/:id/follow-on resumes the match
+      }
+    }
+
+    await this.createNextInnings(client, match, ls, rules, done, false);
+  }
+
+  /**
+   * Dynamic innings sequencing: each side bats innings_per_side times; the next
+   * batting team is whichever has batted fewer completed innings (ties broken by
+   * alternation). A follow-on innings repeats the previous batting team.
+   */
+  private async createNextInnings(
+    client: PoolClient, match: any, ls: any, rules: FormatRules, done: any[], isFollowOn: boolean,
+  ) {
+    const totalInnings = (rules.innings_per_side ?? 1) * 2;
+    const nextSeq = done.length + 1;
+    const firstBatting = done[0].batting_team_id;
+    const other = firstBatting === match.team_a_id ? match.team_b_id : match.team_a_id;
+
+    let nextBatting: string;
+    if (isFollowOn) {
+      nextBatting = done[done.length - 1].batting_team_id; // same side bats again
+    } else {
+      const battedCount = (team: string) => done.filter((i) => i.batting_team_id === team).length;
+      const [a, b] = [battedCount(firstBatting), battedCount(other)];
+      nextBatting = a < b ? firstBatting
+        : b < a ? other
+        : done[done.length - 1].batting_team_id === firstBatting ? other : firstBatting;
+    }
+    const nextBowling = nextBatting === match.team_a_id ? match.team_b_id : match.team_a_id;
+
+    // Target only in the final innings: opponent aggregate − own aggregate + 1
+    let target: number | null = null;
+    if (nextSeq === totalInnings) {
+      const oppRuns = done.filter((i: any) => i.batting_team_id !== nextBatting).reduce((s: number, i: any) => s + i.total_runs, 0);
+      const ownRuns = done.filter((i: any) => i.batting_team_id === nextBatting).reduce((s: number, i: any) => s + i.total_runs, 0);
+      target = oppRuns - ownRuns + 1;
+
+      // Innings victory: the side due to bat already leads — no final innings needed.
+      if (target <= 0) {
+        const marginRuns = 1 - target; // own − opp
+        await this.completeMatchInningsVictory(client, match, ls, nextBatting, marginRuns);
+        return;
+      }
+    }
+
+    const next = (
+      await client.query(
+        `INSERT INTO innings (match_id, seq, batting_team_id, bowling_team_id, status, max_overs, target_runs, is_follow_on)
+         VALUES ($1,$2,$3,$4,'not_started',$5,$6,$7) RETURNING id`,
+        [match.id, nextSeq, nextBatting, nextBowling, rules.overs_per_innings, target, isFollowOn],
+      )
+    ).rows[0];
+
+    ls.innings_id = next.id;
+    ls.innings_seq = nextSeq;
+    ls.engine = null;
+    ls.batters = {}; ls.bowlers = {}; ls.this_over = []; ls.over_bowler_runs = 0;
+    ls.pending_new_batter = null; ls.current_bowler = null;
+    await client.query(`UPDATE matches SET status = 'innings_break' WHERE id = $1`, [match.id]);
+    match.status = 'innings_break';
+  }
+
+  private async completeMatchInningsVictory(
+    client: PoolClient, match: any, ls: any, winnerTeamId: string, marginRuns: number,
+  ) {
+    const winShort = (await client.query(`SELECT short_name FROM teams WHERE id = $1`, [winnerTeamId])).rows[0].short_name;
+    const summary = `${winShort} won by an innings and ${marginRuns} run${marginRuns === 1 ? '' : 's'}`;
+    await client.query(
+      `UPDATE matches SET status = 'completed', completed_at = now(), winner_team_id = $2,
+              result_type = 'win', win_margin = $3, result_summary = $4 WHERE id = $1`,
+      [match.id, winnerTeamId, JSON.stringify({ by: 'innings', value: marginRuns }), summary],
+    );
+    match.status = 'completed';
+    ls.result_summary = summary;
+    ls.innings_id = null; ls.engine = null;
+    setImmediate(() => this.stats.finalizeMatch(match.id).catch((e) => console.error('stats finalize failed:', e.message)));
+  }
+
+  private async completeMatch(client: PoolClient, match: any, ls: any, rules: FormatRules, effect: SideEffect) {
+    const innings = (
+      await client.query(
+        `SELECT i.*, tm.short_name FROM innings i JOIN teams tm ON tm.id = i.batting_team_id
+         WHERE i.match_id = $1 ORDER BY i.seq`,
+        [match.id],
+      )
+    ).rows;
+    const last = innings[innings.length - 1];
+    let winner: string | null = null;
+    let resultType = 'win';
+    let margin: any = null;
+    let summary = '';
+
+    if (effect.kind === 'super_over_required' || (effect.kind === 'match_complete' && effect.result === 'tie')) {
+      resultType = 'tie';
+      summary = 'Match tied';
+    } else {
+      const chaseTotal = ls.engine.totalRuns;
+      const target = ls.engine.target;
+      if (target !== null && chaseTotal >= target) {
+        winner = last.batting_team_id;
+        const wicketsLeft = (rules.wickets_to_fall ?? 10) - ls.engine.totalWickets;
+        const ballsLeft = ls.engine.maxOvers !== null ? ls.engine.maxOvers * rules.balls_per_over - ls.engine.legalBalls : null;
+        margin = { by: 'wickets', value: wicketsLeft, balls_remaining: ballsLeft };
+        summary = `${last.short_name} won by ${wicketsLeft} wicket${wicketsLeft === 1 ? '' : 's'}`;
+      } else if (target !== null) {
+        winner = last.bowling_team_id;
+        const runs = target - 1 - chaseTotal;
+        const winShort = (
+          await client.query(`SELECT short_name FROM teams WHERE id = $1`, [winner])
+        ).rows[0].short_name;
+        margin = { by: 'runs', value: runs };
+        summary = `${winShort} won by ${runs} run${runs === 1 ? '' : 's'}`;
+      }
+    }
+
+    await client.query(
+      `UPDATE innings SET status = 'completed', ended_at = coalesce(ended_at, now()) WHERE id = $1 AND status = 'in_progress'`,
+      [ls.innings_id],
+    );
+    await client.query(
+      `UPDATE matches SET status = 'completed', completed_at = now(), winner_team_id = $2,
+              result_type = $3, win_margin = $4, result_summary = $5
+       WHERE id = $1`,
+      [match.id, winner, resultType, margin ? JSON.stringify(margin) : null, summary],
+    );
+    match.status = 'completed';
+    ls.result_summary = summary;
+
+    // Super-over child: write the decisive result back onto the tied parent.
+    if (match.is_super_over && match.parent_match_id && winner) {
+      const winShort = (await client.query(`SELECT short_name FROM teams WHERE id = $1`, [winner])).rows[0].short_name;
+      await client.query(
+        `UPDATE matches SET winner_team_id = $2, result_type = 'win',
+                win_margin = '{"by":"super_over"}', result_summary = $3
+         WHERE id = $1`,
+        [match.parent_match_id, winner, `${winShort} won the Super Over (${match.stage_label ?? 'Super Over'})`],
+      );
+    }
+  }
+
+  /** Rebuild innings counters, over summaries, and live state from the ball stream. */
+  private async replayInnings(client: PoolClient, match: any, inningsId: string) {
+    const rules: FormatRules = match.rules_snapshot;
+    const innings = (await client.query(`SELECT * FROM innings WHERE id = $1`, [inningsId])).rows[0];
+    const balls = (
+      await client.query(
+        `SELECT * FROM balls WHERE innings_id = $1 AND NOT is_superseded ORDER BY seq`,
+        [inningsId],
+      )
+    ).rows;
+
+    const ls = match.live_state;
+    let engine: LiveInningsState | null = null;
+    ls.batters = {}; ls.bowlers = {}; ls.this_over = []; ls.over_bowler_runs = 0; ls.pending_new_batter = null;
+
+    await client.query(`DELETE FROM over_summaries WHERE innings_id = $1`, [inningsId]);
+
+    if (balls.length > 0) {
+      const first = balls[0];
+      engine = {
+        seq: first.seq - 1, totalRuns: 0, totalWickets: 0, legalBalls: 0,
+        maxOvers: innings.max_overs !== null ? Number(innings.max_overs) : null,
+        target: innings.target_runs, freeHitPending: false, currentOverBalls: 0,
+        lastOverBowlerId: null, bowlerLegalBalls: {},
+        strikerId: first.striker_id, nonStrikerId: first.non_striker_id, battersRetiredHurt: [],
+      };
+      for (const b of balls) {
+        // Trust recorded striker/bowler (corrections may have changed rotation)
+        engine.strikerId = b.striker_id;
+        engine.nonStrikerId = b.non_striker_id;
+        const autoPenalty = b.extra_type === 'wide' ? rules.wide?.runs ?? 1 : b.extra_type === 'no_ball' ? rules.no_ball?.runs ?? 1 : 0;
+        const ev: BallEvent = {
+          strikerId: b.striker_id, nonStrikerId: b.non_striker_id, bowlerId: b.bowler_id,
+          runsBatter: b.runs_batter, extraType: b.extra_type,
+          runsExtras: b.runs_extras - autoPenalty,
+          wicket: b.is_wicket ? { type: b.wicket_type, dismissedPlayerId: b.dismissed_player_id, fielderId: b.fielder_id } : null,
+        };
+        const r = applyBall(engine, ev, rules);
+        if (r.ok) engine = r.next;
+
+        // Rebuild cards
+        const bat = (ls.batters[b.striker_id] ??= await this.batterCard(client, b.striker_id));
+        if (b.extra_type !== 'wide') bat.balls += 1;
+        bat.runs += b.runs_batter;
+        if (b.is_boundary_four) bat.fours += 1;
+        if (b.is_boundary_six) bat.sixes += 1;
+        if (b.is_wicket && b.dismissed_player_id && ls.batters[b.dismissed_player_id]) {
+          ls.batters[b.dismissed_player_id].out = true;
+        }
+        const bowlerRuns = b.runs_batter + (['wide', 'no_ball'].includes(b.extra_type ?? '') ? b.runs_extras : 0);
+        const bowl = (ls.bowlers[b.bowler_id] ??= await this.bowlerCard(client, b.bowler_id));
+        if (b.is_legal) bowl.legal_balls += 1;
+        bowl.runs += bowlerRuns;
+        if (b.is_wicket && !['run_out', 'retired_hurt', 'retired_out', 'obstructing_field', 'timed_out'].includes(b.wicket_type)) {
+          bowl.wickets += 1;
+        }
+        await client.query(
+          `INSERT INTO over_summaries (innings_id, over_number, bowler_id, runs, wickets, extras, cumulative_runs, cumulative_wickets)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           ON CONFLICT (innings_id, over_number) DO UPDATE SET
+             runs = over_summaries.runs + excluded.runs, wickets = over_summaries.wickets + excluded.wickets,
+             extras = over_summaries.extras + excluded.extras,
+             cumulative_runs = excluded.cumulative_runs, cumulative_wickets = excluded.cumulative_wickets`,
+          [inningsId, b.over_number, b.bowler_id, b.runs_batter + b.runs_extras, b.is_wicket ? 1 : 0,
+           b.runs_extras, engine.totalRuns, engine.totalWickets],
+        );
+        ls.current_bowler = b.bowler_id;
+      }
+      // this_over = balls of the current (possibly partial) over
+      const currentOver = Math.floor(engine.legalBalls / rules.balls_per_over);
+      ls.this_over = balls
+        .filter((b) => b.over_number === currentOver || (engine!.currentOverBalls === 0 && b.over_number === currentOver - 1 && false))
+        .filter((b) => b.over_number === currentOver)
+        .map((b) => this.ballLabel(
+          { runsBatter: b.runs_batter, extraType: b.extra_type, runsExtras: b.runs_extras, wicket: b.is_wicket ? ({} as any) : null } as any,
+          b.is_boundary_four, b.is_boundary_six,
+        ));
+    }
+
+    // Recompute innings counters from balls
+    const agg = (
+      await client.query(
+        `SELECT coalesce(sum(runs_batter + runs_extras),0)::int AS runs,
+                count(*) FILTER (WHERE is_wicket AND wicket_type <> 'retired_hurt')::int AS wkts,
+                count(*) FILTER (WHERE is_legal)::int AS legal,
+                coalesce(sum(runs_extras) FILTER (WHERE extra_type = 'wide'),0)::int AS wides,
+                coalesce(sum(runs_extras) FILTER (WHERE extra_type = 'no_ball'),0)::int AS nbs,
+                coalesce(sum(runs_extras) FILTER (WHERE extra_type = 'bye'),0)::int AS byes,
+                coalesce(sum(runs_extras) FILTER (WHERE extra_type = 'leg_bye'),0)::int AS lbs
+         FROM balls WHERE innings_id = $1 AND NOT is_superseded`,
+        [inningsId],
+      )
+    ).rows[0];
+    await client.query(
+      `UPDATE innings SET total_runs=$2, total_wickets=$3, legal_balls=$4,
+              extras_wides=$5, extras_no_balls=$6, extras_byes=$7, extras_leg_byes=$8 WHERE id=$1`,
+      [inningsId, agg.runs, agg.wkts, agg.legal, agg.wides, agg.nbs, agg.byes, agg.lbs],
+    );
+
+    ls.engine = engine;
+    ls.summary = await this.buildSummary(client, ls, rules);
+    const newSeq = engine?.seq ?? 0;
+    await client.query(
+      `UPDATE matches SET live_state = $2, live_state_seq = $3, status = 'live' WHERE id = $1`,
+      [match.id, JSON.stringify(ls), newSeq],
+    );
+    return ls;
+  }
+
+  // ---- helpers ----
+
+  private async withMatch<T>(matchId: string, fn: (client: PoolClient, match: any) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const res = await client.query(`SELECT * FROM matches WHERE id = $1 FOR UPDATE`, [matchId]);
+      if (res.rowCount === 0) throw new NotFoundException('Match not found');
+      const out = await fn(client, res.rows[0]);
+      await client.query('COMMIT');
+      return out;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async assertInXI(client: PoolClient, matchId: string, playerIds: string[], need: 'bat' | 'bowl') {
+    for (const id of playerIds) {
+      const r = await client.query(
+        `SELECT 1 FROM match_players
+         WHERE match_id = $1 AND player_id = $2
+           AND (is_playing_xi OR (is_twelfth AND ${need === 'bat' ? 'can_bat' : 'can_bowl'}))`,
+        [matchId, id],
+      );
+      if (r.rowCount === 0) {
+        // Allow when no squad was registered (casual scoring)
+        const anySquad = await client.query(`SELECT 1 FROM match_players WHERE match_id = $1 LIMIT 1`, [matchId]);
+        if (anySquad.rowCount! > 0) throw new BadRequestException(`Player ${id} is not eligible to ${need} in this match`);
+      }
+    }
+  }
+
+  private async batterCard(client: PoolClient, playerId: string) {
+    const p = (await client.query(`SELECT full_name FROM players WHERE id = $1`, [playerId])).rows[0];
+    return { name: p?.full_name ?? 'Unknown', runs: 0, balls: 0, fours: 0, sixes: 0, out: false };
+  }
+
+  private async bowlerCard(client: PoolClient, playerId: string) {
+    const p = (await client.query(`SELECT full_name FROM players WHERE id = $1`, [playerId])).rows[0];
+    return { name: p?.full_name ?? 'Unknown', legal_balls: 0, runs: 0, wickets: 0, maidens: 0 };
+  }
+
+  private ballLabel(ev: BallEvent, four: boolean, six: boolean): string {
+    if (ev.wicket) return 'W';
+    if (ev.extraType === 'wide') return `${ev.runsExtras ? ev.runsExtras + 1 : ''}wd`;
+    if (ev.extraType === 'no_ball') return `${ev.runsBatter ? ev.runsBatter : ''}nb`;
+    if (ev.extraType === 'bye') return `${ev.runsExtras}b`;
+    if (ev.extraType === 'leg_bye') return `${ev.runsExtras}lb`;
+    if (six) return '6';
+    if (four) return '4';
+    return String(ev.runsBatter);
+  }
+
+  private async summaryShell(client: PoolClient, battingTeamId: string, target: number | null) {
+    const t = (await client.query(`SELECT short_name FROM teams WHERE id = $1`, [battingTeamId])).rows[0];
+    return { batting_team: t?.short_name, score: '0/0', overs: '0.0', target, current_rr: 0, required_rr: null };
+  }
+
+  private async buildSummary(client: PoolClient, ls: any, rules: FormatRules) {
+    const innings = (
+      await client.query(
+        `SELECT i.total_runs, i.total_wickets, i.legal_balls, i.target_runs, i.max_overs, tm.short_name
+         FROM innings i JOIN teams tm ON tm.id = i.batting_team_id WHERE i.id = $1`,
+        [ls.innings_id],
+      )
+    ).rows[0];
+    if (!innings) return ls.summary;
+    const bpo = rules.balls_per_over ?? 6;
+    const overs = `${Math.floor(innings.legal_balls / bpo)}.${innings.legal_balls % bpo}`;
+    const crr = innings.legal_balls > 0 ? +(innings.total_runs * bpo / innings.legal_balls).toFixed(2) : 0;
+    let rrr: number | null = null;
+    if (innings.target_runs !== null && innings.max_overs !== null) {
+      const ballsLeft = Number(innings.max_overs) * bpo - innings.legal_balls;
+      rrr = ballsLeft > 0 ? +(((innings.target_runs - innings.total_runs) * bpo) / ballsLeft).toFixed(2) : null;
+    }
+    return {
+      batting_team: innings.short_name,
+      score: `${innings.total_runs}/${innings.total_wickets}`,
+      overs,
+      target: innings.target_runs,
+      current_rr: crr,
+      required_rr: rrr,
+    };
+  }
+}
