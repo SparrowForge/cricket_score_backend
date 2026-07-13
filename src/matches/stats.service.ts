@@ -110,24 +110,89 @@ export class StatsService {
   }
 
   // ---------- MVP ----------
+  /**
+   * MVP points with match context, not just raw tallies:
+   * - batting: runs + boundary bonus + milestone bonus + pace-vs-match-run-rate
+   *   impact (runs above/below par for the balls consumed — rewards
+   *   match-turning quick runs, discounts slow crawls);
+   * - bowling: wickets + maidens + dots + runs saved vs the match run rate
+   *   (economy in context) + a match-turning bonus for dismissing a set
+   *   batter (scaled by the victim's runs at the fall);
+   * - fielding: unchanged;
+   * - match-winning effect: every component ×1.1 for the winning team.
+   */
   private async buildMvpPoints(client: PoolClient, matchId: string) {
     await client.query(`DELETE FROM match_mvp_points WHERE match_id = $1`, [matchId]);
     await client.query(
-      `INSERT INTO match_mvp_points (match_id, player_id, batting_points, bowling_points, fielding_points, total_points)
+      `WITH mrr AS (
+         SELECT CASE WHEN sum(legal_balls) > 0
+                     THEN sum(total_runs)::numeric * 6 / sum(legal_balls)
+                     ELSE 0 END AS rr
+         FROM innings WHERE match_id = $1
+       ),
+       big_wickets AS (
+         -- Match-turning bowling: credit for removing a batter who was set,
+         -- weighted by the runs the victim had scored at the fall.
+         SELECT b.bowler_id AS player_id, sum(victim.runs)::numeric AS victim_runs
+         FROM balls b
+         JOIN innings i ON i.id = b.innings_id
+         CROSS JOIN LATERAL (
+           SELECT coalesce(sum(b2.runs_batter), 0) AS runs
+           FROM balls b2
+           WHERE b2.innings_id = b.innings_id AND b2.striker_id = b.dismissed_player_id
+             AND b2.seq <= b.seq AND NOT b2.is_superseded
+         ) victim
+         WHERE i.match_id = $1 AND b.is_wicket AND NOT b.is_superseded
+           AND b.wicket_type NOT IN ('run_out','retired_hurt','retired_out','obstructing_field','timed_out')
+         GROUP BY b.bowler_id
+       ),
+       scored AS (
+         SELECT pms.match_id, pms.player_id,
+                greatest(
+                  pms.runs_scored + pms.fours * 1 + pms.sixes * 2
+                  + CASE WHEN pms.runs_scored >= 100 THEN 16 WHEN pms.runs_scored >= 50 THEN 8 ELSE 0 END
+                  + CASE WHEN pms.batted AND pms.balls_faced > 0
+                         THEN (pms.runs_scored - pms.balls_faced * mrr.rr / 6) * 0.5
+                         ELSE 0 END,
+                  0) AS batting,
+                greatest(
+                  pms.wickets_taken * 20 + pms.maidens * 8 + pms.dot_balls * 0.5
+                  + CASE WHEN pms.wickets_taken >= 5 THEN 16 WHEN pms.wickets_taken >= 3 THEN 8 ELSE 0 END
+                  + CASE WHEN pms.balls_bowled > 0
+                         THEN (pms.balls_bowled * mrr.rr / 6 - pms.runs_conceded) * 0.5
+                         ELSE 0 END
+                  + coalesce(bw.victim_runs, 0) * 0.4,
+                  0) AS bowling,
+                pms.catches * 8 + pms.stumpings * 12 + pms.run_outs * 6 AS fielding,
+                CASE WHEN m.winner_team_id IS NOT NULL AND pms.team_id = m.winner_team_id
+                     THEN 1.1 ELSE 1.0 END AS win_factor
+         FROM player_match_stats pms
+         JOIN matches m ON m.id = pms.match_id
+         CROSS JOIN mrr
+         LEFT JOIN big_wickets bw ON bw.player_id = pms.player_id
+         WHERE pms.match_id = $1
+       )
+       INSERT INTO match_mvp_points (match_id, player_id, batting_points, bowling_points, fielding_points, total_points)
        SELECT match_id, player_id,
-              runs_scored + fours * 1 + sixes * 2,
-              wickets_taken * 25 + maidens * 8 + dot_balls * 0.5,
-              catches * 8 + stumpings * 12 + run_outs * 6,
-              (runs_scored + fours * 1 + sixes * 2)
-              + (wickets_taken * 25 + maidens * 8 + dot_balls * 0.5)
-              + (catches * 8 + stumpings * 12 + run_outs * 6)
-       FROM player_match_stats WHERE match_id = $1`,
+              round(batting * win_factor, 2),
+              round(bowling * win_factor, 2),
+              round(fielding * win_factor, 2),
+              round((batting + bowling + fielding) * win_factor, 2)
+       FROM scored`,
       [matchId],
     );
     await client.query(
       `UPDATE player_match_stats pms SET mvp_points = mmp.total_points
        FROM match_mvp_points mmp
        WHERE mmp.match_id = pms.match_id AND mmp.player_id = pms.player_id AND pms.match_id = $1`,
+      [matchId],
+    );
+    // Default Man of the Match: top MVP, unless the scorer already chose one.
+    await client.query(
+      `UPDATE matches SET player_of_match_id = (
+         SELECT player_id FROM match_mvp_points WHERE match_id = $1
+         ORDER BY total_points DESC LIMIT 1)
+       WHERE id = $1 AND player_of_match_id IS NULL AND status = 'completed'`,
       [matchId],
     );
   }

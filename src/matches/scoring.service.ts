@@ -909,15 +909,21 @@ export class ScoringService {
         );
         ls.current_bowler = b.bowler_id;
       }
-      // this_over = balls of the current (possibly partial) over
+      // this_over = balls of the current (possibly partial) over.
+      // Stored runs_extras includes the automatic wide/no-ball penalty, but
+      // ballLabel expects only the runs beyond it (a plain wide must render
+      // 'wd', not '2wd'), so strip the penalty back out before labelling.
       const currentOver = Math.floor(engine.legalBalls / rules.balls_per_over);
       ls.this_over = balls
-        .filter((b) => b.over_number === currentOver || (engine!.currentOverBalls === 0 && b.over_number === currentOver - 1 && false))
         .filter((b) => b.over_number === currentOver)
-        .map((b) => this.ballLabel(
-          { runsBatter: b.runs_batter, extraType: b.extra_type, runsExtras: b.runs_extras, wicket: b.is_wicket ? ({} as any) : null } as any,
-          b.is_boundary_four, b.is_boundary_six,
-        ));
+        .map((b) => {
+          const autoPenalty = b.extra_type === 'wide' ? rules.wide?.runs ?? 1
+            : b.extra_type === 'no_ball' ? rules.no_ball?.runs ?? 1 : 0;
+          return this.ballLabel(
+            { runsBatter: b.runs_batter, extraType: b.extra_type, runsExtras: b.runs_extras - autoPenalty, wicket: b.is_wicket ? ({} as any) : null } as any,
+            b.is_boundary_four, b.is_boundary_six,
+          );
+        });
     }
 
     // Recompute innings counters from balls

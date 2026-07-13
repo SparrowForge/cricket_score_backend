@@ -112,12 +112,14 @@ export class MatchesService {
       await this.pool.query(
         `SELECT m.*, ta.name AS team_a_name, ta.short_name AS team_a_short, ta.logo_url AS team_a_logo,
                 tb.name AS team_b_name, tb.short_name AS team_b_short, tb.logo_url AS team_b_logo,
-                v.name AS venue_name, t.name AS tournament_name, t.slug AS tournament_slug
+                v.name AS venue_name, t.name AS tournament_name, t.slug AS tournament_slug,
+                pom.full_name AS player_of_match_name
          FROM matches m
          JOIN teams ta ON ta.id = m.team_a_id
          JOIN teams tb ON tb.id = m.team_b_id
          LEFT JOIN venues v ON v.id = m.venue_id
          LEFT JOIN tournaments t ON t.id = m.tournament_id
+         LEFT JOIN players pom ON pom.id = m.player_of_match_id
          WHERE m.id = $1`,
         [id],
       )
@@ -261,14 +263,34 @@ export class MatchesService {
 
     const runRate = (
       await this.pool.query(
-        `SELECT i.seq AS innings, os.over_number, os.runs, os.wickets, os.cumulative_runs, os.cumulative_wickets
-         FROM over_summaries os JOIN innings i ON i.id = os.innings_id
+        `SELECT i.seq AS innings, tm.short_name AS batting_team, os.over_number, os.runs, os.wickets,
+                os.cumulative_runs, os.cumulative_wickets
+         FROM over_summaries os
+         JOIN innings i ON i.id = os.innings_id
+         JOIN teams tm ON tm.id = i.batting_team_id
          WHERE i.match_id = $1 ORDER BY i.seq, os.over_number`,
         [matchId],
       )
     ).rows;
 
-    return { wagon_wheel: wagon, partnerships, run_rate: runRate };
+    // Per-batter runs for the player-runs bar chart
+    const batting = (
+      await this.pool.query(
+        `SELECT b.striker_id AS player_id, p.full_name, i.seq AS innings, tm.short_name AS team,
+                coalesce(sum(b.runs_batter),0)::int AS runs,
+                count(*) FILTER (WHERE b.extra_type IS DISTINCT FROM 'wide')::int AS balls
+         FROM balls b
+         JOIN innings i ON i.id = b.innings_id
+         JOIN teams tm ON tm.id = i.batting_team_id
+         JOIN players p ON p.id = b.striker_id
+         WHERE i.match_id = $1 AND NOT b.is_superseded
+         GROUP BY b.striker_id, p.full_name, i.seq, tm.short_name
+         ORDER BY i.seq, min(b.seq)`,
+        [matchId],
+      )
+    ).rows;
+
+    return { wagon_wheel: wagon, partnerships, run_rate: runRate, batting };
   }
 
   /** Live state snapshot — Redis-first with Postgres fallback (response carries `source`). */
@@ -327,7 +349,7 @@ export class MatchesService {
   }
 
   async squads(matchId: string) {
-    return (
+    const registered = (
       await this.pool.query(
         `SELECT mp.team_id, tm.short_name AS team, mp.player_id, p.full_name, p.primary_role,
                 mp.is_playing_xi, mp.is_twelfth, mp.can_bat, mp.can_bowl,
@@ -337,6 +359,43 @@ export class MatchesService {
          JOIN teams tm ON tm.id = mp.team_id
          WHERE mp.match_id = $1
          ORDER BY mp.team_id, mp.batting_order NULLS LAST`,
+        [matchId],
+      )
+    ).rows;
+    if (registered.length > 0) return registered;
+
+    // Casual scoring: no squad was registered, so derive who actually played
+    // from the ball stream (batters + bowlers + fielders), in appearance order.
+    return (
+      await this.pool.query(
+        `WITH appearances AS (
+           SELECT b.striker_id AS player_id, i.batting_team_id AS team_id, b.seq
+             FROM balls b JOIN innings i ON i.id = b.innings_id
+            WHERE i.match_id = $1 AND NOT b.is_superseded
+           UNION ALL
+           SELECT b.non_striker_id, i.batting_team_id, b.seq
+             FROM balls b JOIN innings i ON i.id = b.innings_id
+            WHERE i.match_id = $1 AND NOT b.is_superseded
+           UNION ALL
+           SELECT b.bowler_id, i.bowling_team_id, b.seq
+             FROM balls b JOIN innings i ON i.id = b.innings_id
+            WHERE i.match_id = $1 AND NOT b.is_superseded
+           UNION ALL
+           SELECT b.fielder_id, i.bowling_team_id, b.seq
+             FROM balls b JOIN innings i ON i.id = b.innings_id
+            WHERE i.match_id = $1 AND NOT b.is_superseded AND b.fielder_id IS NOT NULL
+         ),
+         participants AS (
+           SELECT player_id, team_id, min(seq) AS first_seq
+           FROM appearances GROUP BY player_id, team_id
+         )
+         SELECT pt.team_id, tm.short_name AS team, pt.player_id, p.full_name, p.primary_role,
+                true AS is_playing_xi, false AS is_twelfth, true AS can_bat, true AS can_bowl,
+                false AS is_captain, false AS is_wicket_keeper, NULL::smallint AS batting_order
+         FROM participants pt
+         JOIN players p ON p.id = pt.player_id
+         JOIN teams tm ON tm.id = pt.team_id
+         ORDER BY pt.team_id, pt.first_seq`,
         [matchId],
       )
     ).rows;
@@ -443,6 +502,9 @@ export class MatchesService {
   }
 
   async commentary(matchId: string, limit = 50, before?: string) {
+    if (before !== undefined && Number.isNaN(Date.parse(before))) {
+      throw new BadRequestException('before must be an ISO timestamp');
+    }
     return (
       await this.pool.query(
         `SELECT c.id, c.body, c.source, c.is_highlight, c.created_at, u.full_name AS author,
