@@ -282,6 +282,22 @@ export class ScoringService {
           }
           ls.this_over = [];
           ls.over_bowler_runs = 0;
+
+          // ---- Over summary commentary (both batters' scores + this over's bowler figures) ----
+          const strikerCard = (ls.batters[post.strikerId] ??= await this.batterCard(client, post.strikerId));
+          const nonStrikerCard = (ls.batters[post.nonStrikerId] ??= await this.batterCard(client, post.nonStrikerId));
+          const bpo = rules.balls_per_over ?? 6;
+          const bowlerFigures = `${Math.floor(bowl.legal_balls / bpo)}.${bowl.legal_balls % bpo}-${bowl.maidens}-${bowl.runs}-${bowl.wickets}`;
+          await client.query(
+            // created_at nudged +1ms so this summary sorts above the ball that ended the over
+            // (Postgres now() is frozen per-transaction, so both inserts would otherwise tie)
+            `INSERT INTO commentary_entries (match_id, innings_id, ball_id, source, body, is_highlight, created_at)
+             VALUES ($1, $2, $3, 'auto', $4, false, now() + interval '1 millisecond')`,
+            [matchId, ls.innings_id, inserted.rows[0].id,
+             `End of over ${ef.overNumber + 1}: ${post.totalRuns}/${post.totalWickets}. ` +
+               `${strikerCard.name} ${strikerCard.runs}(${strikerCard.balls}), ${nonStrikerCard.name} ${nonStrikerCard.runs}(${nonStrikerCard.balls}). ` +
+               `${bowl.name} ${bowlerFigures}`],
+          );
         }
         if (ef.kind === 'new_batter_required') {
           const stillBatting = post.totalWickets < rules.wickets_to_fall;

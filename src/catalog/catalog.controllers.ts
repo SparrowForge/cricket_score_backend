@@ -62,7 +62,12 @@ class CreatePlayerDto {
   @IsOptional() @IsString() display_name?: string;
   @IsOptional() @IsDateString() date_of_birth?: string;
   @IsOptional() @IsIn(['right_hand', 'left_hand']) batting_style?: string;
-  @IsOptional() @IsString() bowling_style?: string;
+  @IsOptional()
+  @IsIn([
+    'right_arm_fast', 'right_arm_fast_medium', 'right_arm_medium', 'right_arm_off_break', 'right_arm_leg_break',
+    'left_arm_fast', 'left_arm_fast_medium', 'left_arm_medium', 'left_arm_orthodox', 'left_arm_chinaman', 'none',
+  ])
+  bowling_style?: string;
   @IsOptional() @IsIn(['batter', 'bowler', 'all_rounder', 'wicket_keeper', 'wicket_keeper_batter'])
   primary_role?: string;
   @IsOptional() @IsString() photo_url?: string;
