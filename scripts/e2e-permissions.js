@@ -28,7 +28,12 @@ async function api(method, path, body, token, expect) {
 
   // A second, low-privilege user
   const viewerEmail = `viewer-${run}@example.com`;
-  const viewer = (await api('POST', '/auth/register', { email: viewerEmail, password: 'ViewerPass!234', full_name: 'View Only' })).data.access_token;
+  const viewer = (await api('POST', '/auth/register', {
+    email: viewerEmail,
+    password: 'ViewerPass!234',
+    full_name: 'View Only',
+    terms_accepted: true,
+  })).data.access_token;
   ok('registered viewer user');
 
   const org = (await api('POST', '/orgs', { name: 'Perm Club', slug: `e2e-club-perm-${run}` }, owner)).data;

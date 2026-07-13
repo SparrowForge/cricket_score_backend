@@ -18,17 +18,31 @@ export class MailService {
     return this.transporter.verify();
   }
 
-  async send(to: string, subject: string, html: string): Promise<void> {
+  async send(to: string, subject: string, html: string, text?: string): Promise<boolean> {
     try {
-      await this.transporter.sendMail({ from: this.from, to, subject, html });
+      const info = await this.transporter.sendMail({ from: this.from, to, subject, html, text });
+      if ((info.rejected?.length ?? 0) > 0) {
+        this.logger.error(`SMTP rejected "${subject}" for ${to}: ${info.response ?? 'no response'}`);
+        return false;
+      }
+      return true;
     } catch (err) {
       // Mail must never break a request path; failures are logged for retry tooling.
       this.logger.error(`Failed to send "${subject}" to ${to}: ${(err as Error).message}`);
+      return false;
     }
   }
 
-  async sendWelcome(to: string, name: string): Promise<void> {
-    await this.send(
+  async sendWelcome(to: string, name: string): Promise<boolean> {
+    const text = [
+      `Welcome, ${name}!`,
+      '',
+      'Your CricLive account is ready. You can now create tournaments, manage teams and score matches ball-by-ball in real time.',
+      '',
+      `Open CricLive: ${process.env.FRONTEND_URL ?? '#'}`,
+    ].join('\n');
+
+    return this.send(
       to,
       'Welcome to CricLive 🏏',
       this.layout(`
@@ -37,11 +51,22 @@ export class MailService {
            manage teams and score matches ball-by-ball in real time.</p>
         <p><a href="${process.env.FRONTEND_URL ?? '#'}" style="background:#16a34a;color:#fff;
            padding:10px 20px;border-radius:6px;text-decoration:none">Open CricLive</a></p>`),
+      text,
     );
   }
 
-  async sendPasswordReset(to: string, name: string, resetUrl: string): Promise<void> {
-    await this.send(
+  async sendPasswordReset(to: string, name: string, resetUrl: string): Promise<boolean> {
+    const text = [
+      `Hi ${name},`,
+      '',
+      'We received a request to reset your CricLive password. This link expires in 1 hour:',
+      '',
+      resetUrl,
+      '',
+      "If you didn't request this, you can safely ignore this email.",
+    ].join('\n');
+
+    return this.send(
       to,
       'Reset your CricLive password',
       this.layout(`
@@ -50,6 +75,7 @@ export class MailService {
         <p><a href="${resetUrl}" style="background:#16a34a;color:#fff;padding:10px 20px;
            border-radius:6px;text-decoration:none">Reset password</a></p>
         <p style="color:#666">If you didn't request this, you can safely ignore this email.</p>`),
+      text,
     );
   }
 

@@ -78,7 +78,7 @@ export class AuthController {
     return this.auth.changePassword(req.user.sub, dto);
   }
 
-  /** Sends a reset link by email. Always returns {sent:true}. */
+  /** Sends a reset link by email, without revealing whether the address exists. */
   @Post('forgot-password')
   @Throttle({ default: { ttl: 3_600_000, limit: 5 } })
   forgotPassword(@Body() dto: ForgotPasswordDto) {

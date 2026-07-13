@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
+import { Equals, IsBoolean, IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class RegisterDto {
   @IsEmail()
@@ -13,6 +13,10 @@ export class RegisterDto {
   @IsNotEmpty()
   @MaxLength(120)
   full_name!: string;
+
+  @IsBoolean()
+  @Equals(true, { message: 'You must accept the CricLive terms to create an account.' })
+  terms_accepted!: boolean;
 }
 
 export class LoginDto {

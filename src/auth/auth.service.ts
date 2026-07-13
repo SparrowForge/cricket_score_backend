@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
@@ -19,6 +19,10 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
+    if (!dto.terms_accepted) {
+      throw new BadRequestException('You must accept the CricLive terms to create an account.');
+    }
+
     const password_hash = await bcrypt.hash(dto.password, 12);
 
     const client = await this.pool.connect();
@@ -179,8 +183,14 @@ export class AuthService {
         [user.id, hash],
       );
       const base = (process.env.FRONTEND_URL ?? '').replace(/\/$/, '');
-      void this.mail.sendPasswordReset(email, user.full_name,
-        `${base}/reset-password?token=${token}&email=${encodeURIComponent(email)}`);
+      const sent = await this.mail.sendPasswordReset(
+        email,
+        user.full_name,
+        `${base}/reset-password?token=${token}&email=${encodeURIComponent(email)}`,
+      );
+      if (!sent) {
+        throw new ServiceUnavailableException('We could not send the reset email right now. Please try again later.');
+      }
     }
     return { sent: true };
   }
