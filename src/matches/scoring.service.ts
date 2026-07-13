@@ -170,6 +170,7 @@ export class ScoringService {
         runsBatter: dto.runs_batter ?? 0,
         extraType: dto.extra_type ?? null,
         runsExtras: dto.runs_extras ?? 0,
+        secondaryExtraType: dto.extra_type === 'no_ball' ? (dto.secondary_extra_type ?? null) : null,
         wicket: dto.wicket
           ? { type: dto.wicket.type, dismissedPlayerId: dto.wicket.dismissed_player_id ?? ls.engine.strikerId, fielderId: dto.wicket.fielder_id }
           : null,
@@ -180,11 +181,15 @@ export class ScoringService {
       if (!result.ok) throw new ConflictException({ code: result.code, message: result.message });
       const post = result.next;
 
-      // Total extras actually scored (automatic penalty + runs run)
+      // Total extras actually scored (automatic penalty + runs run).
+      // A no-ball's runsExtras, when secondaryExtraType is set, is the
+      // byes/leg-byes run off it — separate from the no-ball penalty but
+      // still part of the ball's total extras.
       const isLegal = ev.extraType !== 'wide' && ev.extraType !== 'no_ball';
       let totalExtras = ev.runsExtras;
       if (ev.extraType === 'wide') totalExtras += rules.wide?.runs ?? 1;
       if (ev.extraType === 'no_ball') totalExtras += rules.no_ball?.runs ?? 1;
+      const secondaryExtraRuns = ev.extraType === 'no_ball' && ev.secondaryExtraType ? ev.runsExtras : 0;
 
       const overNumber = Math.floor(pre.legalBalls / rules.balls_per_over);
       const ballInOver = pre.currentOverBalls + 1;
@@ -193,20 +198,25 @@ export class ScoringService {
 
       const inserted = await client.query(
         `INSERT INTO balls (innings_id, seq, over_number, ball_in_over, striker_id, non_striker_id, bowler_id,
-                            is_legal, runs_batter, runs_extras, extra_type, is_boundary_four, is_boundary_six,
+                            is_legal, runs_batter, runs_extras, extra_type, secondary_extra_type, secondary_extra_runs,
+                            is_boundary_four, is_boundary_six,
                             is_free_hit, is_wicket, wicket_type, dismissed_player_id, fielder_id,
                             wagon, pitch, shot_type, client_event_id, scored_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
          RETURNING id, seq`,
         [ls.innings_id, post.seq, overNumber, ballInOver, ev.strikerId, ev.nonStrikerId, bowlerId,
-         isLegal, ev.runsBatter, totalExtras, ev.extraType, isFour, isSix,
+         isLegal, ev.runsBatter, totalExtras, ev.extraType, ev.secondaryExtraType ?? null, secondaryExtraRuns,
+         isFour, isSix,
          pre.freeHitPending, !!ev.wicket, ev.wicket?.type ?? null, ev.wicket?.dismissedPlayerId ?? null,
          ev.wicket?.fielderId ?? null,
          dto.wagon ? JSON.stringify(dto.wagon) : null, dto.pitch ? JSON.stringify(dto.pitch) : null,
          dto.shot_type ?? null, dto.client_event_id, userId],
       );
 
-      // Innings counters
+      // Innings counters. Byes/leg-byes always exclude the no-ball penalty
+      // (extras_no_balls), and a no-ball's byes/leg-byes component (if any)
+      // is routed to extras_byes/extras_leg_byes just like a plain bye —
+      // never lumped into extras_no_balls or dropped.
       await client.query(
         `UPDATE innings SET total_runs = $2, total_wickets = $3, legal_balls = $4,
                 extras_wides = extras_wides + $5, extras_no_balls = extras_no_balls + $6,
@@ -215,12 +225,14 @@ export class ScoringService {
         [ls.innings_id, post.totalRuns, post.totalWickets, post.legalBalls,
          ev.extraType === 'wide' ? totalExtras : 0,
          ev.extraType === 'no_ball' ? rules.no_ball?.runs ?? 1 : 0,
-         ev.extraType === 'bye' ? ev.runsExtras : 0,
-         ev.extraType === 'leg_bye' ? ev.runsExtras : 0],
+         ev.extraType === 'bye' ? ev.runsExtras : (ev.secondaryExtraType === 'bye' ? secondaryExtraRuns : 0),
+         ev.extraType === 'leg_bye' ? ev.runsExtras : (ev.secondaryExtraType === 'leg_bye' ? secondaryExtraRuns : 0)],
       );
 
-      // Over summary (bowler charged with batter runs + wide/no-ball extras)
-      const bowlerRuns = ev.runsBatter + (['wide', 'no_ball'].includes(ev.extraType ?? '') ? totalExtras : 0);
+      // Over summary (bowler charged with batter runs + wide/no-ball extras —
+      // byes/leg-byes are never charged to the bowler, even the ones run
+      // off a no-ball, so the secondary component is excluded here).
+      const bowlerRuns = ev.runsBatter + (['wide', 'no_ball'].includes(ev.extraType ?? '') ? totalExtras - secondaryExtraRuns : 0);
       await client.query(
         `INSERT INTO over_summaries (innings_id, over_number, bowler_id, runs, wickets, extras,
                                      cumulative_runs, cumulative_wickets)
@@ -270,16 +282,29 @@ export class ScoringService {
       let matchCompleted = false;
       for (const ef of result.effects) {
         if (ef.kind === 'over_complete') {
-          if ((ls.over_bowler_runs ?? 0) - bowlerRuns === 0 && bowlerRuns === 0) {
-            await client.query(
-              `UPDATE over_summaries SET is_maiden = (runs = 0) WHERE innings_id = $1 AND over_number = $2`,
-              [ls.innings_id, ef.overNumber],
-            );
-            const maiden = (await client.query(
-              `SELECT is_maiden FROM over_summaries WHERE innings_id = $1 AND over_number = $2`,
-              [ls.innings_id, ef.overNumber])).rows[0];
-            if (maiden?.is_maiden) bowl.maidens += 1;
-          }
+          // A maiden is a completed over where the bowler conceded zero
+          // runs — byes and leg-byes (including any run off a no-ball)
+          // don't count against the bowler, so they must NOT break a
+          // maiden. over_summaries.runs mixes those in, so compute the
+          // bowler-charged total for this over directly from the ball
+          // stream instead.
+          const overAgg = (await client.query(
+            `SELECT coalesce(sum(runs_batter + CASE WHEN extra_type IN ('wide','no_ball')
+                     THEN runs_extras - secondary_extra_runs ELSE 0 END), 0)::int AS runs,
+                    count(*) FILTER (WHERE is_wicket AND wicket_type NOT IN
+                      ('run_out','retired_hurt','retired_out','obstructing_field','timed_out'))::int AS bowler_wickets
+             FROM balls WHERE innings_id = $1 AND over_number = $2 AND NOT is_superseded`,
+            [ls.innings_id, ef.overNumber],
+          )).rows[0];
+          const isMaidenOver = overAgg.runs === 0;
+          // Wicket maiden: a maiden in which the bowler also took ≥1 wicket
+          // (bowler-credited dismissals only — a run-out doesn't count).
+          const isWicketMaiden = isMaidenOver && overAgg.bowler_wickets > 0;
+          await client.query(
+            `UPDATE over_summaries SET is_maiden = $3 WHERE innings_id = $1 AND over_number = $2`,
+            [ls.innings_id, ef.overNumber, isMaidenOver],
+          );
+          if (isMaidenOver) bowl.maidens += 1;
           ls.this_over = [];
           ls.over_bowler_runs = 0;
 
@@ -292,11 +317,13 @@ export class ScoringService {
             // created_at nudged +1ms so this summary sorts above the ball that ended the over
             // (Postgres now() is frozen per-transaction, so both inserts would otherwise tie)
             `INSERT INTO commentary_entries (match_id, innings_id, ball_id, source, body, is_highlight, created_at)
-             VALUES ($1, $2, $3, 'auto', $4, false, now() + interval '1 millisecond')`,
+             VALUES ($1, $2, $3, 'auto', $4, $5, now() + interval '1 millisecond')`,
             [matchId, ls.innings_id, inserted.rows[0].id,
              `End of over ${ef.overNumber + 1}: ${post.totalRuns}/${post.totalWickets}. ` +
+               (isWicketMaiden ? 'WICKET MAIDEN! ' : isMaidenOver ? 'Maiden over! ' : '') +
                `${strikerCard.name} ${strikerCard.runs}(${strikerCard.balls}), ${nonStrikerCard.name} ${nonStrikerCard.runs}(${nonStrikerCard.balls}). ` +
-               `${bowl.name} ${bowlerFigures}`],
+               `${bowl.name} ${bowlerFigures}`,
+             isMaidenOver],
           );
         }
         if (ef.kind === 'new_batter_required') {
@@ -892,6 +919,7 @@ export class ScoringService {
           strikerId: b.striker_id, nonStrikerId: b.non_striker_id, bowlerId: b.bowler_id,
           runsBatter: b.runs_batter, extraType: b.extra_type,
           runsExtras: b.runs_extras - autoPenalty,
+          secondaryExtraType: b.secondary_extra_type ?? null,
           wicket: b.is_wicket ? { type: b.wicket_type, dismissedPlayerId: b.dismissed_player_id, fielderId: b.fielder_id } : null,
         };
         const r = applyBall(engine, ev, rules);
@@ -906,7 +934,9 @@ export class ScoringService {
         if (b.is_wicket && b.dismissed_player_id && ls.batters[b.dismissed_player_id]) {
           ls.batters[b.dismissed_player_id].out = true;
         }
-        const bowlerRuns = b.runs_batter + (['wide', 'no_ball'].includes(b.extra_type ?? '') ? b.runs_extras : 0);
+        // Byes/leg-byes (including any run off a no-ball) are never charged to the bowler.
+        const bowlerRuns = b.runs_batter
+          + (['wide', 'no_ball'].includes(b.extra_type ?? '') ? b.runs_extras - b.secondary_extra_runs : 0);
         const bowl = (ls.bowlers[b.bowler_id] ??= await this.bowlerCard(client, b.bowler_id));
         if (b.is_legal) bowl.legal_balls += 1;
         bowl.runs += bowlerRuns;
@@ -936,10 +966,35 @@ export class ScoringService {
           const autoPenalty = b.extra_type === 'wide' ? rules.wide?.runs ?? 1
             : b.extra_type === 'no_ball' ? rules.no_ball?.runs ?? 1 : 0;
           return this.ballLabel(
-            { runsBatter: b.runs_batter, extraType: b.extra_type, runsExtras: b.runs_extras - autoPenalty, wicket: b.is_wicket ? ({} as any) : null } as any,
+            {
+              runsBatter: b.runs_batter, extraType: b.extra_type, runsExtras: b.runs_extras - autoPenalty,
+              secondaryExtraType: b.secondary_extra_type ?? null, wicket: b.is_wicket ? ({} as any) : null,
+            } as any,
             b.is_boundary_four, b.is_boundary_six,
           );
         });
+
+      // Maidens: completed overs (everything before the current, possibly
+      // partial, over) where the bowler's charged runs (excluding
+      // byes/leg-byes, including any run off a no-ball) totalled zero.
+      const maidensByBowler = (
+        await client.query(
+          `SELECT bowler_id, count(*)::int AS maidens FROM (
+             SELECT bowler_id, over_number,
+                    sum(runs_batter + CASE WHEN extra_type IN ('wide','no_ball')
+                        THEN runs_extras - secondary_extra_runs ELSE 0 END) AS runs
+             FROM balls
+             WHERE innings_id = $1 AND NOT is_superseded AND over_number < $2
+             GROUP BY bowler_id, over_number
+           ) per_over
+           WHERE runs = 0
+           GROUP BY bowler_id`,
+          [inningsId, currentOver],
+        )
+      ).rows;
+      for (const row of maidensByBowler) {
+        (ls.bowlers[row.bowler_id] ??= await this.bowlerCard(client, row.bowler_id)).maidens = row.maidens;
+      }
     }
 
     // Recompute innings counters from balls
@@ -949,9 +1004,11 @@ export class ScoringService {
                 count(*) FILTER (WHERE is_wicket AND wicket_type <> 'retired_hurt')::int AS wkts,
                 count(*) FILTER (WHERE is_legal)::int AS legal,
                 coalesce(sum(runs_extras) FILTER (WHERE extra_type = 'wide'),0)::int AS wides,
-                coalesce(sum(runs_extras) FILTER (WHERE extra_type = 'no_ball'),0)::int AS nbs,
-                coalesce(sum(runs_extras) FILTER (WHERE extra_type = 'bye'),0)::int AS byes,
-                coalesce(sum(runs_extras) FILTER (WHERE extra_type = 'leg_bye'),0)::int AS lbs
+                coalesce(sum(runs_extras - secondary_extra_runs) FILTER (WHERE extra_type = 'no_ball'),0)::int AS nbs,
+                coalesce(sum(runs_extras) FILTER (WHERE extra_type = 'bye'),0)::int
+                  + coalesce(sum(secondary_extra_runs) FILTER (WHERE secondary_extra_type = 'bye'),0)::int AS byes,
+                coalesce(sum(runs_extras) FILTER (WHERE extra_type = 'leg_bye'),0)::int
+                  + coalesce(sum(secondary_extra_runs) FILTER (WHERE secondary_extra_type = 'leg_bye'),0)::int AS lbs
          FROM balls WHERE innings_id = $1 AND NOT is_superseded`,
         [inningsId],
       )
@@ -1033,6 +1090,9 @@ export class ScoringService {
     } else if (six) desc = 'SIX! That has sailed over the rope';
     else if (four) desc = 'FOUR! Finds the boundary';
     else if (ev.extraType === 'wide') desc = `wide${totalExtras > 1 ? `, ${totalExtras} extras` : ''}`;
+    else if (ev.extraType === 'no_ball' && ev.secondaryExtraType) {
+      desc = `no ball, ${ev.runsExtras} ${ev.secondaryExtraType === 'bye' ? 'bye' : 'leg bye'}${ev.runsExtras > 1 ? 's' : ''}${post.freeHitPending ? ', free hit coming up' : ''}`;
+    }
     else if (ev.extraType === 'no_ball') desc = `no ball${ev.runsBatter ? ` — ${ev.runsBatter} off the bat` : ''}${post.freeHitPending ? ', free hit coming up' : ''}`;
     else if (ev.extraType === 'bye') desc = `${ev.runsExtras} bye${ev.runsExtras > 1 ? 's' : ''}`;
     else if (ev.extraType === 'leg_bye') desc = `${ev.runsExtras} leg bye${ev.runsExtras > 1 ? 's' : ''}`;
@@ -1044,6 +1104,7 @@ export class ScoringService {
   private ballLabel(ev: BallEvent, four: boolean, six: boolean): string {
     if (ev.wicket) return 'W';
     if (ev.extraType === 'wide') return `${ev.runsExtras ? ev.runsExtras + 1 : ''}wd`;
+    if (ev.extraType === 'no_ball' && ev.secondaryExtraType) return `nb+${ev.runsExtras}${ev.secondaryExtraType === 'bye' ? 'b' : 'lb'}`;
     if (ev.extraType === 'no_ball') return `${ev.runsBatter ? ev.runsBatter : ''}nb`;
     if (ev.extraType === 'bye') return `${ev.runsExtras}b`;
     if (ev.extraType === 'leg_bye') return `${ev.runsExtras}lb`;

@@ -88,6 +88,16 @@ export class MatchesService {
    * without needing a tournament at all.
    */
   async createManual(orgId: string, dto: any) {
+    // Every scheduled match must belong to a tournament in the same org
+    // (super-over children are created internally and bypass this method).
+    const tournament = (
+      await this.pool.query(
+        `SELECT id FROM tournaments WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL`,
+        [dto.tournament_id, orgId],
+      )
+    ).rows[0];
+    if (!tournament) throw new BadRequestException('tournament_id must reference a tournament in this organization');
+
     let rulesSnapshot: string | null = null;
     if (dto.format_id) {
       const format = (
@@ -101,7 +111,7 @@ export class MatchesService {
       `INSERT INTO matches (tournament_id, organization_id, match_number, stage, stage_label, group_id,
                             team_a_id, team_b_id, venue_id, scheduled_start, rules_snapshot)
        VALUES ($1,$2,$3, coalesce($4,'league')::fixture_stage, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-      [dto.tournament_id ?? null, orgId, dto.match_number ?? null, dto.stage ?? null, dto.stage_label ?? null,
+      [dto.tournament_id, orgId, dto.match_number ?? null, dto.stage ?? null, dto.stage_label ?? null,
        dto.group_id ?? null, dto.team_a_id, dto.team_b_id, dto.venue_id ?? null, dto.scheduled_start, rulesSnapshot],
     );
     return res.rows[0];
@@ -457,8 +467,9 @@ export class MatchesService {
         await this.pool.query(
           `SELECT p.id, p.full_name,
                   count(*) FILTER (WHERE b.is_legal)::int AS legal_balls,
-                  coalesce(sum(b.runs_batter + CASE WHEN b.extra_type IN ('wide','no_ball') THEN b.runs_extras ELSE 0 END),0)::int AS runs_conceded,
-                  count(*) FILTER (WHERE b.is_wicket AND b.wicket_type NOT IN ('run_out','retired_hurt','retired_out','obstructing_field','timed_out'))::int AS wickets
+                  coalesce(sum(b.runs_batter + CASE WHEN b.extra_type IN ('wide','no_ball') THEN b.runs_extras - b.secondary_extra_runs ELSE 0 END),0)::int AS runs_conceded,
+                  count(*) FILTER (WHERE b.is_wicket AND b.wicket_type NOT IN ('run_out','retired_hurt','retired_out','obstructing_field','timed_out'))::int AS wickets,
+                  coalesce((SELECT count(*) FROM over_summaries os WHERE os.innings_id = $1 AND os.bowler_id = p.id AND os.is_maiden), 0)::int AS maidens
            FROM balls b JOIN players p ON p.id = b.bowler_id
            WHERE b.innings_id = $1 AND NOT b.is_superseded
            GROUP BY p.id, p.full_name

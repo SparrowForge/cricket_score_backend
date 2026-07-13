@@ -64,7 +64,7 @@ export class StatsService {
        bowling AS (
          SELECT bowler_id AS player_id, bowling_team_id AS team_id,
                 count(*) FILTER (WHERE is_legal)::int AS balls_bowled,
-                sum(runs_batter + CASE WHEN extra_type IN ('wide','no_ball') THEN runs_extras ELSE 0 END)::int AS runs_conceded,
+                sum(runs_batter + CASE WHEN extra_type IN ('wide','no_ball') THEN runs_extras - secondary_extra_runs ELSE 0 END)::int AS runs_conceded,
                 count(*) FILTER (WHERE is_wicket AND wicket_type NOT IN ('run_out','retired_hurt','retired_out','obstructing_field','timed_out'))::int AS wickets,
                 count(*) FILTER (WHERE extra_type = 'wide')::int AS wides,
                 count(*) FILTER (WHERE extra_type = 'no_ball')::int AS no_balls,

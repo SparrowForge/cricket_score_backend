@@ -30,6 +30,16 @@ export interface BallEvent {
   runsBatter: number;
   extraType: 'wide' | 'no_ball' | 'bye' | 'leg_bye' | 'penalty' | null;
   runsExtras: number;
+  /**
+   * A no-ball can ALSO carry byes/leg-byes run by the batsmen off it (the
+   * no-ball penalty and the byes are scored and charged separately — the
+   * penalty stays a no-ball against the bowler, the byes don't). Only
+   * meaningful when extraType === 'no_ball'; runsExtras in that case holds
+   * the byes/leg-byes run count (the automatic penalty is added on top by
+   * the rules, same as a plain no-ball). A wide never gets one of these —
+   * runs taken off a wide are, by law, scored entirely as more wides.
+   */
+  secondaryExtraType?: 'bye' | 'leg_bye' | null;
   wicket: { type: WicketType; dismissedPlayerId: string; fielderId?: string } | null;
 }
 
@@ -129,8 +139,22 @@ export function applyBall(state: LiveInningsState, ev: BallEvent, rules: FormatR
     effects.push({ kind: 'new_batter_required', dismissedId: ev.wicket.dismissedPlayerId });
   }
 
-  // Strike rotation: odd batter runs swap; byes/leg-byes count as runs run.
-  const runsRun = ev.runsBatter + (['bye', 'leg_bye'].includes(ev.extraType ?? '') ? ev.runsExtras : 0);
+  // Strike rotation: the striker changes ends on an ODD number of runs
+  // actually run between the wickets, regardless of the delivery type.
+  // - Off the bat: ev.runsBatter (already excludes automatic penalties).
+  // - Byes/leg-byes: ev.runsExtras is the running-runs count.
+  // - Wide: any runs beyond the automatic penalty are always run (a wide
+  //   can't be "hit"), so ev.runsExtras is running-runs there too.
+  // - No-ball: ev.runsExtras is running-runs ONLY when it's byes/leg-byes
+  //   run off it (secondaryExtraType set); runs off the bat already come
+  //   through ev.runsBatter.
+  const runningExtraRuns =
+    ev.extraType === 'bye' || ev.extraType === 'leg_bye' || ev.extraType === 'wide'
+      ? ev.runsExtras
+      : ev.extraType === 'no_ball' && ev.secondaryExtraType
+        ? ev.runsExtras
+        : 0;
+  const runsRun = ev.runsBatter + runningExtraRuns;
   if (runsRun % 2 === 1) [next.strikerId, next.nonStrikerId] = [next.nonStrikerId, next.strikerId];
 
   // Over complete? (swap strike again at over change)

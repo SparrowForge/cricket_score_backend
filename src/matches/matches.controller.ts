@@ -16,7 +16,9 @@ import { StatsService } from './stats.service';
 
 // ---------------- DTOs ----------------
 class CreateMatchDto {
-  @IsOptional() @IsUUID() tournament_id?: string;
+  /** Every match lives under a tournament (super-over child matches are the
+   *  only exception, and those are created internally, never via this DTO). */
+  @IsUUID() tournament_id!: string;
   @IsOptional() @IsInt() match_number?: number;
   @IsOptional() @IsIn(['group', 'league', 'quarter_final', 'semi_final', 'final', 'playoff', 'qualifier', 'eliminator', 'custom'])
   stage?: string;
@@ -79,8 +81,13 @@ class BallDto {
   @IsOptional() @IsUUID() bowler_id?: string;
   @IsOptional() @IsInt() @Min(0) @Max(8) runs_batter?: number;
   @IsOptional() @IsIn(['wide', 'no_ball', 'bye', 'leg_bye', 'penalty']) extra_type?: string;
-  /** Runs beyond the automatic penalty (e.g. wide + 2 runs → 2) */
+  /** Runs beyond the automatic penalty (e.g. wide + 2 runs → 2). For a
+   *  no-ball + byes/leg-byes combo, this is the byes/leg-byes run count. */
   @IsOptional() @IsInt() @Min(0) @Max(8) runs_extras?: number;
+  /** Only with extra_type='no_ball': flags that runs_extras is byes/leg-byes
+   *  run off the no-ball rather than runs off the bat (mutually exclusive
+   *  with runs_batter being scorer's off-the-bat count for that ball). */
+  @IsOptional() @IsIn(['bye', 'leg_bye']) secondary_extra_type?: string;
   @IsOptional() @IsBoolean() is_boundary_four?: boolean;
   @IsOptional() @IsBoolean() is_boundary_six?: boolean;
   @IsOptional() @ValidateNested() @Type(() => WicketDto) wicket?: WicketDto;
