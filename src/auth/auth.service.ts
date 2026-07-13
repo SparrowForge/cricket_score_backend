@@ -2,13 +2,16 @@ import { BadRequestException, ConflictException, Inject, Injectable, Unauthorize
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
-import { Pool } from 'pg';
+import { OAuth2Client } from 'google-auth-library';
+import { Pool, PoolClient } from 'pg';
 import { PG_POOL } from '../database/database.module';
 import { MailService } from '../mail/mail.service';
 import { RegisterDto, LoginDto } from './dto';
 
 @Injectable()
 export class AuthService {
+  private readonly googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
   constructor(
     @Inject(PG_POOL) private readonly pool: Pool,
     private readonly jwt: JwtService,
@@ -31,16 +34,7 @@ export class AuthService {
       );
       if (inserted.rowCount === 0) throw new ConflictException('An account with this email already exists');
       const user = inserted.rows[0];
-
-      // Bootstrap: the very first user becomes super admin; everyone else is a viewer.
-      const isFirst = (await client.query(`SELECT count(*)::int AS n FROM users`)).rows[0].n === 1;
-      const roleSlug = isFirst ? 'super_admin' : 'viewer';
-      await client.query(
-        `INSERT INTO user_role_assignments (user_id, role_id)
-         SELECT $1, id FROM roles WHERE slug = $2 AND organization_id IS NULL`,
-        [user.id, roleSlug],
-      );
-
+      await this.assignDefaultRole(client, user.id);
       await client.query('COMMIT');
 
       void this.mail.sendWelcome(user.email, user.full_name); // fire-and-forget
@@ -51,6 +45,71 @@ export class AuthService {
     } finally {
       client.release();
     }
+  }
+
+  /** Verifies a Google Identity Services credential, then signs in (linking by email) or registers the user. */
+  async googleLogin(idToken: string) {
+    let payload;
+    try {
+      const ticket = await this.googleClient.verifyIdToken({ idToken, audience: process.env.GOOGLE_CLIENT_ID });
+      payload = ticket.getPayload();
+    } catch {
+      throw new UnauthorizedException('Invalid Google credential');
+    }
+    if (!payload?.email) throw new UnauthorizedException('Google account has no email');
+    if (!payload.email_verified) throw new UnauthorizedException('Google email is not verified');
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const existing = (
+        await client.query(
+          `SELECT id, status FROM users WHERE (google_id = $1 OR email = $2) AND deleted_at IS NULL`,
+          [payload.sub, payload.email],
+        )
+      ).rows[0];
+
+      let userId: string;
+      if (existing) {
+        if (existing.status === 'suspended') throw new UnauthorizedException('Account suspended');
+        userId = existing.id;
+        await client.query(
+          `UPDATE users SET google_id = $2, avatar_url = coalesce(avatar_url, $3), email_verified_at = coalesce(email_verified_at, now())
+           WHERE id = $1`,
+          [userId, payload.sub, payload.picture ?? null],
+        );
+      } else {
+        const inserted = await client.query(
+          `INSERT INTO users (email, google_id, full_name, avatar_url, status, email_verified_at)
+           VALUES ($1, $2, $3, $4, 'active', now()) RETURNING id`,
+          [payload.email, payload.sub, payload.name ?? payload.email, payload.picture ?? null],
+        );
+        userId = inserted.rows[0].id;
+        await this.assignDefaultRole(client, userId);
+        void this.mail.sendWelcome(payload.email, payload.name ?? payload.email);
+      }
+
+      await client.query('COMMIT');
+      await this.pool.query(`UPDATE users SET last_login_at = now() WHERE id = $1`, [userId]);
+      return this.issueToken(userId, payload.email);
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** Bootstrap: the very first user becomes super admin; everyone else is a viewer. */
+  private async assignDefaultRole(client: PoolClient, userId: string) {
+    const isFirst = (await client.query(`SELECT count(*)::int AS n FROM users`)).rows[0].n === 1;
+    const roleSlug = isFirst ? 'super_admin' : 'viewer';
+    await client.query(
+      `INSERT INTO user_role_assignments (user_id, role_id)
+       SELECT $1, id FROM roles WHERE slug = $2 AND organization_id IS NULL`,
+      [userId, roleSlug],
+    );
   }
 
   async login(dto: LoginDto) {

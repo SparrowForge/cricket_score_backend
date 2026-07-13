@@ -4,7 +4,7 @@ import { Throttle } from '@nestjs/throttler';
 import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { LoginDto, RegisterDto } from './dto';
+import { GoogleLoginDto, LoginDto, RegisterDto } from './dto';
 
 class UpdateProfileDto {
   @IsOptional() @IsString() @MaxLength(120) full_name?: string;
@@ -42,6 +42,13 @@ export class AuthController {
   @Throttle({ default: { ttl: 60_000, limit: 5 } })
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto);
+  }
+
+  /** Sign in (or register) with a Google Identity Services credential. */
+  @Post('google')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  googleLogin(@Body() dto: GoogleLoginDto) {
+    return this.auth.googleLogin(dto.id_token);
   }
 
   @Get('me')

@@ -23,3 +23,10 @@ export class LoginDto {
   @IsNotEmpty()
   password!: string;
 }
+
+export class GoogleLoginDto {
+  /** Google Identity Services credential — a signed JWT, verified server-side. */
+  @IsString()
+  @IsNotEmpty()
+  id_token!: string;
+}
