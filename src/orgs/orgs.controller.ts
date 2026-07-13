@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, UseGuards,
+  Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { IsEmail, IsIn, IsNotEmpty, IsObject, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
@@ -88,6 +88,21 @@ export class OrgsController {
   async members(@Param('orgId', ParseUUIDPipe) orgId: string, @CurrentUser() user: JwtPayload) {
     await this.access.assertOrgMember(orgId, user);
     return this.orgs.members(orgId);
+  }
+
+  /**
+   * Autocomplete for the add-member form: search registered users by email or
+   * name. Owner-gated (same as adding members) so member emails aren't
+   * enumerable by ordinary members; requires ≥2 chars, returns at most 10.
+   */
+  @Get(':orgId/user-search')
+  async userSearch(
+    @Param('orgId', ParseUUIDPipe) orgId: string,
+    @CurrentUser() user: JwtPayload,
+    @Query('q') q?: string,
+  ) {
+    await this.access.assertOrgOwner(orgId, user);
+    return this.orgs.userSearch(q ?? '');
   }
 
   /** Add a registered user to the org with a role (tournament_admin | scorer | commentator | viewer). */

@@ -126,6 +126,19 @@ export class OrgsService {
     return res.rows;
   }
 
+  /** Registered-user autocomplete for the add-member form (owner-gated at the controller). */
+  async userSearch(q: string) {
+    const term = q.trim();
+    if (term.length < 2) return [];
+    const res = await this.pool.query(
+      `SELECT id, email, full_name FROM users
+       WHERE deleted_at IS NULL AND (email ILIKE $1 OR full_name ILIKE $1)
+       ORDER BY email LIMIT 10`,
+      [`%${term}%`],
+    );
+    return res.rows;
+  }
+
   /** Add an existing user (by email) as a member with a role (scorer/commentator/tournament_admin/viewer). */
   async addMember(orgId: string, dto: { email: string; role: string }, invitedBy: string) {
     const user = (await this.pool.query(`SELECT id, full_name FROM users WHERE email = $1 AND deleted_at IS NULL`, [dto.email])).rows[0];

@@ -274,7 +274,8 @@ export class ScoringService {
         `INSERT INTO commentary_entries (match_id, innings_id, ball_id, source, body, is_highlight)
          VALUES ($1, $2, $3, 'auto', $4, $5)`,
         [matchId, ls.innings_id, inserted.rows[0].id,
-         this.commentaryText(overNumber, ballInOver, bowl.name, bat.name, ev, totalExtras, isFour, isSix, post),
+         this.commentaryText(overNumber, ballInOver, bowl.name, bat.name, ev, totalExtras, isFour, isSix, post,
+           dto.wagon?.region ?? null),
          isHighlight],
       );
 
@@ -1082,13 +1083,16 @@ export class ScoringService {
   private commentaryText(
     over: number, ballInOver: number, bowler: string, striker: string,
     ev: BallEvent, totalExtras: number, four: boolean, six: boolean, post: LiveInningsState,
+    region: string | null = null,
   ): string {
     const head = `${over}.${ballInOver} — ${bowler} to ${striker}, `;
+    // Shot placement from the scorer's wagon tap, e.g. 'mid_wicket' → ' to mid wicket'
+    const to = region && ev.extraType !== 'wide' ? ` to ${region.replace(/_/g, ' ')}` : '';
     let desc: string;
     if (ev.wicket) {
       desc = `WICKET! ${ev.wicket.type.replace(/_/g, ' ')}${ev.runsBatter ? ` (${ev.runsBatter} run${ev.runsBatter > 1 ? 's' : ''} completed)` : ''}`;
-    } else if (six) desc = 'SIX! That has sailed over the rope';
-    else if (four) desc = 'FOUR! Finds the boundary';
+    } else if (six) desc = `SIX!${region ? ` Launched over ${region.replace(/_/g, ' ')}` : ' That has sailed over the rope'}`;
+    else if (four) desc = `FOUR!${region ? ` Finds the ${region.replace(/_/g, ' ')} boundary` : ' Finds the boundary'}`;
     else if (ev.extraType === 'wide') desc = `wide${totalExtras > 1 ? `, ${totalExtras} extras` : ''}`;
     else if (ev.extraType === 'no_ball' && ev.secondaryExtraType) {
       desc = `no ball, ${ev.runsExtras} ${ev.secondaryExtraType === 'bye' ? 'bye' : 'leg bye'}${ev.runsExtras > 1 ? 's' : ''}${post.freeHitPending ? ', free hit coming up' : ''}`;
@@ -1096,8 +1100,8 @@ export class ScoringService {
     else if (ev.extraType === 'no_ball') desc = `no ball${ev.runsBatter ? ` — ${ev.runsBatter} off the bat` : ''}${post.freeHitPending ? ', free hit coming up' : ''}`;
     else if (ev.extraType === 'bye') desc = `${ev.runsExtras} bye${ev.runsExtras > 1 ? 's' : ''}`;
     else if (ev.extraType === 'leg_bye') desc = `${ev.runsExtras} leg bye${ev.runsExtras > 1 ? 's' : ''}`;
-    else if (ev.runsBatter === 0) desc = 'no run';
-    else desc = `${ev.runsBatter} run${ev.runsBatter > 1 ? 's' : ''}`;
+    else if (ev.runsBatter === 0) desc = `no run${to}`;
+    else desc = `${ev.runsBatter} run${ev.runsBatter > 1 ? 's' : ''}${to}`;
     return `${head}${desc}. ${post.totalRuns}/${post.totalWickets}`;
   }
 
