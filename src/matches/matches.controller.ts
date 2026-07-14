@@ -161,6 +161,7 @@ class CommentaryDto {
   @IsString() @IsNotEmpty() @MaxLength(2000) body!: string;
   @IsOptional() @IsBoolean() is_highlight?: boolean;
   @IsOptional() @IsUUID() ball_id?: string;
+  @IsOptional() @IsUUID() fielder_player_id?: string;
 }
 
 class AssignScorerDto {

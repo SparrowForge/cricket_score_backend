@@ -83,6 +83,16 @@ export class StatsService {
                 count(*) FILTER (WHERE wicket_type = 'run_out')::int AS run_outs
          FROM b WHERE fielder_id IS NOT NULL GROUP BY fielder_id, bowling_team_id
        ),
+       fielding_errors AS (
+         SELECT ce.fielder_player_id AS player_id,
+                count(*) FILTER (WHERE ce.body LIKE 'DROPPED CATCH!%')::int AS dropped_catches,
+                count(*) FILTER (WHERE ce.body LIKE 'RUN OUT MISSED!%')::int AS missed_run_outs,
+                count(*) FILTER (WHERE ce.body LIKE 'MISFIELD!%')::int AS misfields
+         FROM commentary_entries ce
+         JOIN innings i ON i.id = ce.innings_id
+         WHERE i.match_id = $1 AND ce.fielder_player_id IS NOT NULL
+         GROUP BY ce.fielder_player_id
+       ),
        all_players AS (
          SELECT player_id, team_id FROM batting
          UNION SELECT player_id, team_id FROM bowling
@@ -163,13 +173,19 @@ export class StatsService {
                          ELSE 0 END
                   + coalesce(bw.victim_runs, 0) * 0.4,
                   0) AS bowling,
-                pms.catches * 8 + pms.stumpings * 12 + pms.run_outs * 6 AS fielding,
+                greatest(
+                  pms.catches * 8 + pms.stumpings * 12 + pms.run_outs * 6
+                  - coalesce(fe.dropped_catches, 0) * 4
+                  - coalesce(fe.missed_run_outs, 0) * 3
+                  - coalesce(fe.misfields, 0) * 2,
+                  0) AS fielding,
                 CASE WHEN m.winner_team_id IS NOT NULL AND pms.team_id = m.winner_team_id
                      THEN 1.1 ELSE 1.0 END AS win_factor
          FROM player_match_stats pms
          JOIN matches m ON m.id = pms.match_id
          CROSS JOIN mrr
          LEFT JOIN big_wickets bw ON bw.player_id = pms.player_id
+         LEFT JOIN fielding_errors fe ON fe.player_id = pms.player_id
          WHERE pms.match_id = $1
        )
        INSERT INTO match_mvp_points (match_id, player_id, batting_points, bowling_points, fielding_points, total_points)

@@ -292,6 +292,7 @@ export class ScoringService {
           const overAgg = (await client.query(
             `SELECT coalesce(sum(runs_batter + CASE WHEN extra_type IN ('wide','no_ball')
                      THEN runs_extras - secondary_extra_runs ELSE 0 END), 0)::int AS runs,
+                    coalesce(sum(runs_batter + runs_extras), 0)::int AS total_over_runs,
                     count(*) FILTER (WHERE is_wicket AND wicket_type NOT IN
                       ('run_out','retired_hurt','retired_out','obstructing_field','timed_out'))::int AS bowler_wickets
              FROM balls WHERE innings_id = $1 AND over_number = $2 AND NOT is_superseded`,
@@ -320,7 +321,7 @@ export class ScoringService {
             `INSERT INTO commentary_entries (match_id, innings_id, ball_id, source, body, is_highlight, created_at)
              VALUES ($1, $2, $3, 'auto', $4, $5, now() + interval '1 millisecond')`,
             [matchId, ls.innings_id, inserted.rows[0].id,
-             `End of over ${ef.overNumber + 1}: ${post.totalRuns}/${post.totalWickets}. ` +
+             `End of over ${ef.overNumber + 1} — ${overAgg.total_over_runs} runs: ${post.totalRuns}/${post.totalWickets}. ` +
                (isWicketMaiden ? 'WICKET MAIDEN! ' : isMaidenOver ? 'Maiden over! ' : '') +
                `${strikerCard.name} ${strikerCard.runs}(${strikerCard.balls}), ${nonStrikerCard.name} ${nonStrikerCard.runs}(${nonStrikerCard.balls}). ` +
                `${bowl.name} ${bowlerFigures}`,

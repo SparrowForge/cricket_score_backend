@@ -530,14 +530,18 @@ export class MatchesService {
     ).rows;
   }
 
-  async addCommentary(matchId: string, userId: string, dto: { body: string; is_highlight?: boolean; ball_id?: string }) {
+  async addCommentary(matchId: string, userId: string, dto: { body: string; is_highlight?: boolean; ball_id?: string; fielder_player_id?: string }) {
     const res = await this.pool.query(
       `INSERT INTO commentary_entries (match_id, author_id, source, body, is_highlight, ball_id,
-                                       innings_id)
+                                       innings_id, fielder_player_id)
        VALUES ($1, $2, 'manual', $3, coalesce($4,false), $5,
-               (SELECT innings_id FROM balls WHERE id = $5))
+               coalesce(
+                 (SELECT innings_id FROM balls WHERE id = $5),
+                 (SELECT id FROM innings WHERE match_id = $1 AND status = 'live' LIMIT 1)
+               ),
+               $6)
        RETURNING *`,
-      [matchId, userId, dto.body, dto.is_highlight, dto.ball_id ?? null],
+      [matchId, userId, dto.body, dto.is_highlight, dto.ball_id ?? null, dto.fielder_player_id ?? null],
     );
     return res.rows[0];
   }
