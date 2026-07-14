@@ -424,6 +424,12 @@ export class MatchesService {
         [matchId],
       )
     ).rows;
+    // A team's per-match player_match_stats row aggregates across every
+    // innings that team batted/bowled in. That's only safe to reuse as a
+    // per-innings fallback when the team appears in exactly one innings
+    // (true for every limited-overs format; not true for Tests/follow-ons).
+    const inningsPerTeam = new Map<string, number>();
+    for (const i of innings) inningsPerTeam.set(i.batting_team_id, (inningsPerTeam.get(i.batting_team_id) ?? 0) + 1);
 
     for (const inn of innings) {
       inn.batting = (
@@ -491,6 +497,40 @@ export class MatchesService {
           [inn.id],
         )
       ).rows;
+
+      // Fallback: the innings clearly happened (non-zero totals recorded by
+      // the scoring engine) but no ball rows survive to derive batting/bowling
+      // from — e.g. historical data where the balls were lost some other way.
+      // Reconstruct a best-effort card from the player_match_stats snapshot
+      // taken at match finalize, which is per-match rather than per-innings,
+      // so this is only trustworthy when the team batted in exactly one
+      // innings all match (every limited-overs format; not Tests/follow-ons).
+      inn.detail_source = 'balls';
+      const inningsHappened = inn.total_runs > 0 || inn.total_wickets > 0 || inn.legal_balls > 0;
+      if (inn.batting.length === 0 && inningsHappened && inningsPerTeam.get(inn.batting_team_id) === 1) {
+        inn.detail_source = 'summary';
+        inn.batting = (
+          await this.pool.query(
+            `SELECT p.id, p.full_name, pms.balls_faced AS balls, pms.runs_scored AS runs,
+                    pms.fours, pms.sixes, pms.is_out, pms.dismissal_type::text AS dismissal
+             FROM player_match_stats pms JOIN players p ON p.id = pms.player_id
+             WHERE pms.match_id = $1 AND pms.team_id = $2 AND pms.batted
+             ORDER BY pms.runs_scored DESC`,
+            [matchId, inn.batting_team_id],
+          )
+        ).rows;
+        inn.bowling = (
+          await this.pool.query(
+            `SELECT p.id, p.full_name, pms.balls_bowled AS legal_balls, pms.maidens,
+                    pms.runs_conceded, pms.wickets_taken AS wickets
+             FROM player_match_stats pms JOIN players p ON p.id = pms.player_id
+             WHERE pms.match_id = $1 AND pms.team_id = $2 AND pms.bowled
+             ORDER BY pms.wickets_taken DESC, pms.runs_conceded ASC`,
+            [matchId, inn.bowling_team_id],
+          )
+        ).rows;
+        inn.fall_of_wickets = []; // not reconstructable from match-level aggregates
+      }
     }
     return innings;
   }
@@ -519,10 +559,18 @@ export class MatchesService {
     return (
       await this.pool.query(
         `SELECT c.id, c.body, c.source, c.is_highlight, c.created_at, u.full_name AS author,
-                b.over_number, b.ball_in_over
+                b.over_number, b.ball_in_over,
+                b.striker_id, sp.full_name AS striker_name,
+                b.bowler_id, bp.full_name AS bowler_name,
+                b.dismissed_player_id, dp.full_name AS dismissed_player_name,
+                c.fielder_player_id, fp.full_name AS fielder_name
          FROM commentary_entries c
          LEFT JOIN users u ON u.id = c.author_id
          LEFT JOIN balls b ON b.id = c.ball_id
+         LEFT JOIN players sp ON sp.id = b.striker_id
+         LEFT JOIN players bp ON bp.id = b.bowler_id
+         LEFT JOIN players dp ON dp.id = b.dismissed_player_id
+         LEFT JOIN players fp ON fp.id = c.fielder_player_id
          WHERE c.match_id = $1 AND ($3::timestamptz IS NULL OR c.created_at < $3)
          ORDER BY c.created_at DESC LIMIT $2`,
         [matchId, Math.min(limit, 200), before ?? null],
@@ -537,7 +585,7 @@ export class MatchesService {
        VALUES ($1, $2, 'manual', $3, coalesce($4,false), $5,
                coalesce(
                  (SELECT innings_id FROM balls WHERE id = $5),
-                 (SELECT id FROM innings WHERE match_id = $1 AND status = 'live' LIMIT 1)
+                 (SELECT id FROM innings WHERE match_id = $1 AND status = 'in_progress' LIMIT 1)
                ),
                $6)
        RETURNING *`,
