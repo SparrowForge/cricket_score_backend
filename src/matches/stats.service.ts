@@ -156,6 +156,16 @@ export class StatsService {
            AND b.wicket_type NOT IN ('run_out','retired_hurt','retired_out','obstructing_field','timed_out')
          GROUP BY b.bowler_id
        ),
+       fielding_errors AS (
+         SELECT ce.fielder_player_id AS player_id,
+                count(*) FILTER (WHERE ce.body LIKE 'DROPPED CATCH!%')::int AS dropped_catches,
+                count(*) FILTER (WHERE ce.body LIKE 'RUN OUT MISSED!%')::int AS missed_run_outs,
+                count(*) FILTER (WHERE ce.body LIKE 'MISFIELD!%')::int AS misfields
+         FROM commentary_entries ce
+         JOIN innings i ON i.id = ce.innings_id
+         WHERE i.match_id = $1 AND ce.fielder_player_id IS NOT NULL
+         GROUP BY ce.fielder_player_id
+       ),
        scored AS (
          SELECT pms.match_id, pms.player_id,
                 greatest(

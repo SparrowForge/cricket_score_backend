@@ -59,16 +59,28 @@ export class MatchesService {
     return (
       await this.pool.query(
         `SELECT m.id, m.match_number, m.stage, m.stage_label, m.status, m.scheduled_start,
-                m.result_summary, m.tournament_id,
+                m.result_summary, m.tournament_id, m.winner_team_id,
                 ta.id AS team_a_id, ta.name AS team_a, ta.short_name AS team_a_short, ta.logo_url AS team_a_logo,
                 tb.id AS team_b_id, tb.name AS team_b, tb.short_name AS team_b_short, tb.logo_url AS team_b_logo,
                 v.name AS venue, t.name AS tournament_name,
-                m.live_state->'summary' AS live_summary
+                m.live_state->'summary' AS live_summary,
+                ia.total_runs AS team_a_runs, ia.total_wickets AS team_a_wickets, ia.legal_balls AS team_a_balls,
+                ib.total_runs AS team_b_runs, ib.total_wickets AS team_b_wickets, ib.legal_balls AS team_b_balls
          FROM matches m
          JOIN teams ta ON ta.id = m.team_a_id
          JOIN teams tb ON tb.id = m.team_b_id
          LEFT JOIN venues v ON v.id = m.venue_id
          LEFT JOIN tournaments t ON t.id = m.tournament_id
+         LEFT JOIN LATERAL (
+           SELECT total_runs, total_wickets, legal_balls FROM innings
+           WHERE match_id = m.id AND batting_team_id = m.team_a_id
+           ORDER BY seq DESC LIMIT 1
+         ) ia ON true
+         LEFT JOIN LATERAL (
+           SELECT total_runs, total_wickets, legal_balls FROM innings
+           WHERE match_id = m.id AND batting_team_id = m.team_b_id
+           ORDER BY seq DESC LIMIT 1
+         ) ib ON true
          WHERE ($1::uuid IS NULL OR m.tournament_id = $1)
            AND ($2::uuid IS NULL OR m.organization_id = $2)
            AND ($3::text IS NULL OR m.status::text = $3)
