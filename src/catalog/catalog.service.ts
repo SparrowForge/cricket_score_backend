@@ -305,6 +305,64 @@ export class CatalogService {
     ).rows;
   }
 
+  /** Overall (career, cross-tournament) leaderboards: Most Runs / Most Wickets / MVP. */
+  async playerLeaders(limit = 15) {
+    const lim = Math.min(limit, 50);
+    // Most-recent team a player turned out for, shown next to their name.
+    const lastTeam = `(
+      SELECT tm.short_name FROM player_match_stats pms2
+      JOIN matches m2 ON m2.id = pms2.match_id
+      JOIN teams tm ON tm.id = pms2.team_id
+      WHERE pms2.player_id = p.id
+      ORDER BY m2.completed_at DESC NULLS LAST LIMIT 1
+    )`;
+    const runs = (
+      await this.pool.query(
+        `SELECT p.id AS player_id, p.full_name, p.photo_url, ${lastTeam} AS team_short_name,
+                sum(pcs.matches_played)::int AS matches_played,
+                sum(pcs.runs_scored)::int AS runs_scored,
+                max(pcs.highest_score)::int AS highest_score,
+                CASE WHEN sum(pcs.balls_faced) > 0
+                     THEN round(sum(pcs.runs_scored)::numeric * 100 / sum(pcs.balls_faced), 1) END AS strike_rate
+         FROM player_career_stats pcs JOIN players p ON p.id = pcs.player_id
+         WHERE p.deleted_at IS NULL
+         GROUP BY p.id, p.full_name, p.photo_url
+         HAVING sum(pcs.runs_scored) > 0
+         ORDER BY runs_scored DESC, strike_rate DESC NULLS LAST LIMIT $1`,
+        [lim],
+      )
+    ).rows;
+    const wickets = (
+      await this.pool.query(
+        `SELECT p.id AS player_id, p.full_name, p.photo_url, ${lastTeam} AS team_short_name,
+                sum(pcs.matches_played)::int AS matches_played,
+                sum(pcs.wickets_taken)::int AS wickets_taken,
+                CASE WHEN sum(pcs.balls_bowled) > 0
+                     THEN round(sum(pcs.runs_conceded)::numeric * 6 / sum(pcs.balls_bowled), 2) END AS economy
+         FROM player_career_stats pcs JOIN players p ON p.id = pcs.player_id
+         WHERE p.deleted_at IS NULL
+         GROUP BY p.id, p.full_name, p.photo_url
+         HAVING sum(pcs.wickets_taken) > 0
+         ORDER BY wickets_taken DESC, economy ASC NULLS LAST LIMIT $1`,
+        [lim],
+      )
+    ).rows;
+    const mvp = (
+      await this.pool.query(
+        `SELECT p.id AS player_id, p.full_name, p.photo_url, ${lastTeam} AS team_short_name,
+                count(*)::int AS matches_played,
+                round(sum(pms.mvp_points), 2) AS mvp_points
+         FROM player_match_stats pms JOIN players p ON p.id = pms.player_id
+         WHERE p.deleted_at IS NULL AND pms.mvp_points IS NOT NULL
+         GROUP BY p.id, p.full_name, p.photo_url
+         HAVING sum(pms.mvp_points) > 0
+         ORDER BY mvp_points DESC LIMIT $1`,
+        [lim],
+      )
+    ).rows;
+    return { runs, wickets, mvp };
+  }
+
   async updatePlayer(playerId: string, dto: any) {
     const res = await this.pool.query(
       `UPDATE players SET full_name = coalesce($2,full_name), display_name = coalesce($3,display_name),

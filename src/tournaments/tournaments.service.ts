@@ -114,13 +114,27 @@ export class TournamentsService {
        VALUES ($1, $3, $2) ON CONFLICT (tournament_id, team_id) DO UPDATE SET group_id = excluded.group_id`,
       [tournamentId, dto.team_id, dto.group_id ?? null],
     );
+    await this.rerankPointsTable(tournamentId);
     return res.rows[0];
   }
 
   async detachTeam(tournamentId: string, teamId: string) {
     await this.pool.query(`DELETE FROM tournament_teams WHERE tournament_id = $1 AND team_id = $2`, [tournamentId, teamId]);
     await this.pool.query(`DELETE FROM points_table_entries WHERE tournament_id = $1 AND team_id = $2`, [tournamentId, teamId]);
+    await this.rerankPointsTable(tournamentId);
     return { detached: true };
+  }
+
+  /** Ranks go stale when rows are added/removed outside a stats rebuild. */
+  private async rerankPointsTable(tournamentId: string) {
+    await this.pool.query(
+      `WITH ranked AS (
+         SELECT id, row_number() OVER (PARTITION BY group_id ORDER BY points DESC, net_run_rate DESC, won DESC) AS rk
+         FROM points_table_entries WHERE tournament_id = $1
+       )
+       UPDATE points_table_entries pte SET rank = ranked.rk FROM ranked WHERE ranked.id = pte.id`,
+      [tournamentId],
+    );
   }
 
   async pointsTable(tournamentId: string) {

@@ -176,7 +176,7 @@ export class StatsService {
                          ELSE 0 END,
                   0) AS batting,
                 greatest(
-                  pms.wickets_taken * 20 + pms.maidens * 8 + pms.dot_balls * 0.5
+                  pms.wickets_taken * 10 + pms.maidens * 8 + pms.dot_balls * 0.5
                   + CASE WHEN pms.wickets_taken >= 5 THEN 16 WHEN pms.wickets_taken >= 3 THEN 8 ELSE 0 END
                   + CASE WHEN pms.balls_bowled > 0
                          THEN (pms.balls_bowled * mrr.rr / 6 - pms.runs_conceded) * 0.5

@@ -111,6 +111,20 @@ export class MatchesService {
     ).rows[0];
     if (!tournament) throw new BadRequestException('tournament_id must reference a tournament in this organization');
 
+    // Both sides must be attached to the tournament — the points table and
+    // stats rollups only cover tournament_teams, so an unattached team's
+    // results would silently vanish from the standings.
+    for (const teamId of [dto.team_a_id, dto.team_b_id]) {
+      const attached = await this.pool.query(
+        `SELECT 1 FROM tournament_teams WHERE tournament_id = $1 AND team_id = $2`,
+        [dto.tournament_id, teamId],
+      );
+      if (attached.rowCount === 0) {
+        const name = (await this.pool.query(`SELECT name FROM teams WHERE id = $1`, [teamId])).rows[0]?.name ?? teamId;
+        throw new BadRequestException(`${name} is not part of this tournament — attach it in the tournament setup first`);
+      }
+    }
+
     let rulesSnapshot: string | null = null;
     if (dto.format_id) {
       const format = (

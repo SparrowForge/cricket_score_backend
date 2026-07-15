@@ -321,6 +321,14 @@ export class PlayersController {
     return this.catalog.createPlayer(orgId, dto);
   }
 
+  /** Overall top performers: Most Runs / Most Wickets / MVP across all matches.
+   *  Declared BEFORE players/:playerId so "leaders" isn't parsed as a UUID. */
+  @Public()
+  @Get('players/leaders')
+  leaders(@Query('limit') limit?: string) {
+    return this.catalog.playerLeaders(limit ? Number(limit) : undefined);
+  }
+
   /** Public player profile: bio, career stats, recent matches, current team affiliations. */
   @Public()
   @Get('players/:playerId')
