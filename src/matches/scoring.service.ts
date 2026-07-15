@@ -294,7 +294,8 @@ export class ScoringService {
                      THEN runs_extras - secondary_extra_runs ELSE 0 END), 0)::int AS runs,
                     coalesce(sum(runs_batter + runs_extras), 0)::int AS total_over_runs,
                     count(*) FILTER (WHERE is_wicket AND wicket_type NOT IN
-                      ('run_out','retired_hurt','retired_out','obstructing_field','timed_out'))::int AS bowler_wickets
+                      ('run_out','retired_hurt','retired_out','obstructing_field','timed_out'))::int AS bowler_wickets,
+                    count(*) FILTER (WHERE is_wicket)::int AS wickets_in_over
              FROM balls WHERE innings_id = $1 AND over_number = $2 AND NOT is_superseded`,
             [ls.innings_id, ef.overNumber],
           )).rows[0];
@@ -302,6 +303,9 @@ export class ScoringService {
           // Wicket maiden: a maiden in which the bowler also took ≥1 wicket
           // (bowler-credited dismissals only — a run-out doesn't count).
           const isWicketMaiden = isMaidenOver && overAgg.bowler_wickets > 0;
+          // Any wicket this over (including run-outs) that isn't already
+          // called out via the wicket-maiden badge.
+          const overWickets = overAgg.wickets_in_over as number;
           await client.query(
             `UPDATE over_summaries SET is_maiden = $3 WHERE innings_id = $1 AND over_number = $2`,
             [ls.innings_id, ef.overNumber, isMaidenOver],
@@ -322,10 +326,12 @@ export class ScoringService {
              VALUES ($1, $2, $3, 'auto', $4, $5, now() + interval '1 millisecond')`,
             [matchId, ls.innings_id, inserted.rows[0].id,
              `End of over ${ef.overNumber + 1} — ${overAgg.total_over_runs} runs: ${post.totalRuns}/${post.totalWickets}. ` +
-               (isWicketMaiden ? 'WICKET MAIDEN! ' : isMaidenOver ? 'Maiden over! ' : '') +
+               (isWicketMaiden ? 'WICKET MAIDEN! '
+                 : isMaidenOver ? 'Maiden over! '
+                 : overWickets > 0 ? `${overWickets} WICKET${overWickets > 1 ? 'S' : ''}! ` : '') +
                `${strikerCard.name} ${strikerCard.runs}(${strikerCard.balls}), ${nonStrikerCard.name} ${nonStrikerCard.runs}(${nonStrikerCard.balls}). ` +
                `${bowl.name} ${bowlerFigures}`,
-             isMaidenOver],
+             isMaidenOver || overWickets > 0],
           );
         }
         if (ef.kind === 'new_batter_required') {
@@ -720,6 +726,65 @@ export class ScoringService {
     await client.query(
       `UPDATE innings SET status = $2, ended_at = now() WHERE id = $1`,
       [ls.innings_id, status],
+    );
+
+    // ---- Innings summary commentary (sorts above the over summary's +1ms nudge) ----
+    const inn = (
+      await client.query(
+        `SELECT i.total_runs, i.total_wickets, i.legal_balls, t.name AS team_name
+         FROM innings i JOIN teams t ON t.id = i.batting_team_id WHERE i.id = $1`,
+        [ls.innings_id],
+      )
+    ).rows[0];
+    const bpoInn = rules.balls_per_over ?? 6;
+    const topBatters = (
+      await client.query(
+        `SELECT p.full_name, sum(b.runs_batter)::int AS runs,
+                count(*) FILTER (WHERE b.extra_type IS DISTINCT FROM 'wide')::int AS balls,
+                count(*) FILTER (WHERE b.is_boundary_four)::int AS fours,
+                count(*) FILTER (WHERE b.is_boundary_six)::int AS sixes
+         FROM balls b JOIN players p ON p.id = b.striker_id
+         WHERE b.innings_id = $1 AND NOT b.is_superseded
+         GROUP BY p.full_name ORDER BY runs DESC, balls ASC LIMIT 2`,
+        [ls.innings_id],
+      )
+    ).rows;
+    const topBowlers = (
+      await client.query(
+        `SELECT p.full_name,
+                count(*) FILTER (WHERE b.is_legal)::int AS legal_balls,
+                sum(b.runs_batter + CASE WHEN b.extra_type IN ('wide','no_ball')
+                     THEN b.runs_extras - b.secondary_extra_runs ELSE 0 END)::int AS runs,
+                count(*) FILTER (WHERE b.is_wicket AND b.wicket_type NOT IN
+                  ('run_out','retired_hurt','retired_out','obstructing_field','timed_out'))::int AS wickets,
+                (SELECT count(*) FROM over_summaries os
+                  WHERE os.innings_id = $1 AND os.bowler_id = b.bowler_id AND os.is_maiden)::int AS maidens
+         FROM balls b JOIN players p ON p.id = b.bowler_id
+         WHERE b.innings_id = $1 AND NOT b.is_superseded
+         GROUP BY b.bowler_id, p.full_name ORDER BY wickets DESC, runs ASC LIMIT 2`,
+        [ls.innings_id],
+      )
+    ).rows;
+    // " | " section separators keep the body parseable on the client even
+    // though player names contain periods ("Md. …").
+    const batTxt = topBatters.map((b) => {
+      const parts = [`${b.balls}`];
+      if (b.sixes > 0) parts.push(`${b.sixes}x6`);
+      if (b.fours > 0) parts.push(`${b.fours}x4`);
+      return `${b.full_name} ${b.runs}(${parts.join(', ')})`;
+    }).join(' · ');
+    const bowlTxt = topBowlers.map((b) =>
+      `${b.full_name} ${Math.floor(b.legal_balls / bpoInn)}.${b.legal_balls % bpoInn}-${b.maidens}-${b.runs}-${b.wickets}`,
+    ).join(' · ');
+    await client.query(
+      `INSERT INTO commentary_entries (match_id, innings_id, source, body, is_highlight, created_at)
+       VALUES ($1, $2, 'auto', $3, true, now() + interval '2 milliseconds')`,
+      [match.id, ls.innings_id,
+       `End of innings ${ls.innings_seq}: ${inn.team_name} ${inn.total_runs}/${inn.total_wickets} ` +
+         `(${Math.floor(inn.legal_balls / bpoInn)}.${inn.legal_balls % bpoInn} ov)` +
+         (reason === 'declared' ? ' — declared.' : reason === 'forfeited' ? ' — forfeited.' : '.') +
+         (batTxt ? ` | BAT: ${batTxt}` : '') +
+         (bowlTxt ? ` | BOWL: ${bowlTxt}` : '')],
     );
     const totalInnings = (rules.innings_per_side ?? 1) * 2;
     if (ls.innings_seq >= totalInnings) return; // match end handled by match_complete effect

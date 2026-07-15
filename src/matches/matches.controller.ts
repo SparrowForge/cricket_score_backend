@@ -224,8 +224,13 @@ export class MatchesController {
   }
 
   @Public() @Get('matches/:id/commentary')
-  commentary(@Param('id', ParseUUIDPipe) id: string, @Query('limit') limit?: number, @Query('before') before?: string) {
-    return this.matches.commentary(id, limit ? Number(limit) : 50, before);
+  commentary(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('limit') limit?: number,
+    @Query('before') before?: string,
+    @Query('innings') innings?: string,
+  ) {
+    return this.matches.commentary(id, limit ? Number(limit) : 50, before, innings ? Number(innings) : undefined);
   }
 
   @Public() @Get('matches/:id/mvp')

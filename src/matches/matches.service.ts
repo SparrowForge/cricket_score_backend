@@ -64,6 +64,7 @@ export class MatchesService {
                 tb.id AS team_b_id, tb.name AS team_b, tb.short_name AS team_b_short, tb.logo_url AS team_b_logo,
                 v.name AS venue, t.name AS tournament_name,
                 m.live_state->'summary' AS live_summary,
+                coalesce((m.rules_snapshot->>'wickets_to_fall')::int, 10) AS wickets_to_fall,
                 ia.total_runs AS team_a_runs, ia.total_wickets AS team_a_wickets, ia.legal_balls AS team_a_balls,
                 ib.total_runs AS team_b_runs, ib.total_wickets AS team_b_wickets, ib.legal_balls AS team_b_balls
          FROM matches m
@@ -564,7 +565,7 @@ export class MatchesService {
     ).rows;
   }
 
-  async commentary(matchId: string, limit = 50, before?: string) {
+  async commentary(matchId: string, limit = 50, before?: string, inningsSeq?: number) {
     if (before !== undefined && Number.isNaN(Date.parse(before))) {
       throw new BadRequestException('before must be an ISO timestamp');
     }
@@ -573,6 +574,7 @@ export class MatchesService {
         `SELECT c.id, c.body, c.source, c.is_highlight, c.created_at, u.full_name AS author,
                 b.over_number, b.ball_in_over,
                 b.striker_id, sp.full_name AS striker_name,
+                b.non_striker_id, np.full_name AS non_striker_name,
                 b.bowler_id, bp.full_name AS bowler_name,
                 b.dismissed_player_id, dp.full_name AS dismissed_player_name,
                 c.fielder_player_id, fp.full_name AS fielder_name
@@ -580,12 +582,14 @@ export class MatchesService {
          LEFT JOIN users u ON u.id = c.author_id
          LEFT JOIN balls b ON b.id = c.ball_id
          LEFT JOIN players sp ON sp.id = b.striker_id
+         LEFT JOIN players np ON np.id = b.non_striker_id
          LEFT JOIN players bp ON bp.id = b.bowler_id
          LEFT JOIN players dp ON dp.id = b.dismissed_player_id
          LEFT JOIN players fp ON fp.id = c.fielder_player_id
          WHERE c.match_id = $1 AND ($3::timestamptz IS NULL OR c.created_at < $3)
+           AND ($4::int IS NULL OR c.innings_id = (SELECT id FROM innings WHERE match_id = $1 AND seq = $4))
          ORDER BY c.created_at DESC LIMIT $2`,
-        [matchId, Math.min(limit, 200), before ?? null],
+        [matchId, Math.min(limit, 200), before ?? null, inningsSeq ?? null],
       )
     ).rows;
   }
