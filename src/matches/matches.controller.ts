@@ -99,7 +99,6 @@ class BallDto {
 
 class NewBatterDto {
   @IsUUID() player_id!: string;
-  @IsOptional() @IsIn(['striker', 'non_striker']) wicket_broken_end?: 'striker' | 'non_striker';
 }
 
 class CloseInningsDto {
