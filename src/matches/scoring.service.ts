@@ -1292,7 +1292,7 @@ export class ScoringService {
   }
 
   private ballLabel(ev: BallEvent, four: boolean, six: boolean): string {
-    if (ev.wicket) return 'W';
+    if (ev.wicket) return ev.runsBatter ? `${ev.runsBatter}W` : 'W';
     if (ev.extraType === 'wide') return `${ev.runsExtras ? ev.runsExtras + 1 : ''}wd`;
     if (ev.extraType === 'no_ball' && ev.secondaryExtraType) return `nb+${ev.runsExtras}${ev.secondaryExtraType === 'bye' ? 'b' : 'lb'}`;
     if (ev.extraType === 'no_ball') return `${ev.runsBatter ? ev.runsBatter : ''}nb`;
