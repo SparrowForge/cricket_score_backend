@@ -434,6 +434,126 @@ export class ScoringService {
     return out;
   }
 
+  /** Correct any non-superseded ball: supersede the original, insert a corrected copy at the same seq, replay the innings. */
+  async editBall(matchId: string, ballId: string, dto: {
+    runs_batter?: number; extra_type?: string; runs_extras?: number;
+    secondary_extra_type?: string; secondary_extra_runs?: number;
+    is_boundary_four?: boolean; is_boundary_six?: boolean;
+    wicket_type?: string; dismissed_player_id?: string; fielder_id?: string;
+  }, userId: string) {
+    const out = await this.withMatch(matchId, async (client, match) => {
+      const rules: FormatRules = match.rules_snapshot;
+
+      // 1. Find the original ball and confirm it belongs to this match
+      const orig = (await client.query(
+        `SELECT b.* FROM balls b JOIN innings i ON i.id = b.innings_id
+         WHERE b.id = $1 AND i.match_id = $2 AND NOT b.is_superseded`,
+        [ballId, matchId],
+      )).rows[0];
+      if (!orig) throw new NotFoundException('Ball not found');
+
+      // 2. Derive stored-extras (same formula as scoreBall)
+      const autoPenalty = dto.extra_type === 'wide' ? (rules.wide?.runs ?? 1)
+        : dto.extra_type === 'no_ball' ? (rules.no_ball?.runs ?? 1) : 0;
+      const totalExtras = (dto.extra_type ? autoPenalty : 0) + (dto.runs_extras ?? 0);
+      const isLegal = dto.extra_type !== 'wide' && dto.extra_type !== 'no_ball';
+      const isFour = dto.is_boundary_four ?? false;
+      const isSix = dto.is_boundary_six ?? false;
+
+      // 3. Supersede original
+      await client.query('UPDATE balls SET is_superseded = true WHERE id = $1', [ballId]);
+
+      // 4. Insert corrected ball at the same seq position
+      const { rows: [{ id: newBallId }] } = await client.query(
+        `INSERT INTO balls (innings_id, seq, over_number, ball_in_over,
+                            striker_id, non_striker_id, bowler_id,
+                            is_legal, runs_batter, runs_extras, extra_type,
+                            secondary_extra_type, secondary_extra_runs,
+                            is_boundary_four, is_boundary_six, is_free_hit,
+                            is_wicket, wicket_type, dismissed_player_id, fielder_id,
+                            wagon, pitch, shot_type, client_event_id, scored_by, supersedes_ball_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
+                 gen_random_uuid(),$24,$25)
+         RETURNING id`,
+        [orig.innings_id, orig.seq, orig.over_number, orig.ball_in_over,
+          orig.striker_id, orig.non_striker_id, orig.bowler_id,
+          isLegal, dto.runs_batter ?? 0, totalExtras, dto.extra_type ?? null,
+          dto.secondary_extra_type ?? null, dto.secondary_extra_runs ?? 0,
+          isFour, isSix, orig.is_free_hit,
+          !!dto.wicket_type, dto.wicket_type ?? null,
+          dto.dismissed_player_id ?? orig.striker_id, dto.fielder_id ?? null,
+          orig.wagon, orig.pitch, orig.shot_type, userId, ballId],
+      );
+
+      // 5. Partial replay up to the corrected ball to get score-at-ball for commentary
+      const innings = (await client.query(`SELECT * FROM innings WHERE id = $1`, [orig.innings_id])).rows[0];
+      const allBalls = (await client.query(
+        `SELECT * FROM balls WHERE innings_id = $1 AND NOT is_superseded ORDER BY seq`,
+        [orig.innings_id],
+      )).rows;
+      let partialEng: LiveInningsState = {
+        seq: (allBalls[0]?.seq ?? 1) - 1, totalRuns: 0, totalWickets: 0, legalBalls: 0,
+        maxOvers: innings.max_overs !== null ? Number(innings.max_overs) : null,
+        target: innings.target_runs, freeHitPending: false, currentOverBalls: 0,
+        lastOverBowlerId: null, bowlerLegalBalls: {},
+        strikerId: allBalls[0]?.striker_id ?? orig.striker_id,
+        nonStrikerId: allBalls[0]?.non_striker_id ?? orig.non_striker_id,
+        battersRetiredHurt: [],
+      };
+      for (const b of allBalls) {
+        const pen = b.extra_type === 'wide' ? (rules.wide?.runs ?? 1)
+          : b.extra_type === 'no_ball' ? (rules.no_ball?.runs ?? 1) : 0;
+        const r = applyBall(partialEng, {
+          strikerId: b.striker_id, nonStrikerId: b.non_striker_id, bowlerId: b.bowler_id,
+          runsBatter: b.runs_batter, extraType: b.extra_type, runsExtras: b.runs_extras - pen,
+          secondaryExtraType: b.secondary_extra_type ?? null,
+          wicket: b.is_wicket ? { type: b.wicket_type, dismissedPlayerId: b.dismissed_player_id, fielderId: b.fielder_id } : null,
+        }, rules);
+        if (r.ok) partialEng = r.next;
+        if (b.id === newBallId) break;
+      }
+
+      // 6. Regenerate auto commentary
+      const names = (await client.query(
+        `SELECT sp.full_name AS batter, bp.full_name AS bowler FROM players sp, players bp
+         WHERE sp.id = $1 AND bp.id = $2`,
+        [orig.striker_id, orig.bowler_id],
+      )).rows[0] ?? { batter: 'Unknown', bowler: 'Unknown' };
+      const editedEv: BallEvent = {
+        strikerId: orig.striker_id, nonStrikerId: orig.non_striker_id, bowlerId: orig.bowler_id,
+        runsBatter: dto.runs_batter ?? 0,
+        extraType: (dto.extra_type ?? null) as BallEvent['extraType'],
+        runsExtras: dto.runs_extras ?? 0,
+        secondaryExtraType: (dto.secondary_extra_type ?? null) as BallEvent['secondaryExtraType'],
+        wicket: dto.wicket_type ? {
+          type: dto.wicket_type as import('./rules-engine').WicketType,
+          dismissedPlayerId: dto.dismissed_player_id ?? orig.striker_id,
+          fielderId: dto.fielder_id ?? undefined,
+        } : null,
+      };
+      const newBody = this.commentaryText(
+        orig.over_number, orig.ball_in_over, names.bowler, names.batter,
+        editedEv, totalExtras, isFour, isSix, partialEng, null,
+      );
+      const origTs = (await client.query(
+        `SELECT created_at FROM commentary_entries WHERE ball_id = $1 AND source = 'auto'`, [ballId],
+      )).rows[0]?.created_at;
+      await client.query(`DELETE FROM commentary_entries WHERE ball_id = $1 AND source = 'auto'`, [ballId]);
+      await client.query(
+        `INSERT INTO commentary_entries (match_id, innings_id, ball_id, source, body, is_highlight, created_at)
+         VALUES ($1,$2,$3,'auto',$4,$5,coalesce($6::timestamptz, now()))`,
+        [matchId, orig.innings_id, newBallId, newBody,
+          !!dto.wicket_type || isFour || isSix, origTs ?? null],
+      );
+
+      // 7. Full innings replay to rebuild all state
+      const rebuilt = await this.replayInnings(client, match, orig.innings_id);
+      return { edited: newBallId, state: rebuilt };
+    });
+    await this.live.syncAndPublish(matchId, 'correction', { edited: out.edited });
+    return out;
+  }
+
   // ------------------------------------------------- manual innings control
   async closeInningsManual(matchId: string, reason: 'declared' | 'overs' | 'all_out' | 'forfeited') {
     const out = await this.withMatch(matchId, async (client, match) => {

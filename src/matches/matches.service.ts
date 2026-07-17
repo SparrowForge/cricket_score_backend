@@ -586,7 +586,10 @@ export class MatchesService {
     return (
       await this.pool.query(
         `SELECT c.id, c.body, c.source, c.is_highlight, c.created_at, u.full_name AS author,
-                b.over_number, b.ball_in_over,
+                c.ball_id, b.over_number, b.ball_in_over,
+                b.runs_batter, b.runs_extras, b.extra_type, b.secondary_extra_type,
+                b.secondary_extra_runs, b.is_boundary_four, b.is_boundary_six,
+                b.is_wicket, b.wicket_type,
                 b.striker_id, sp.full_name AS striker_name,
                 b.non_striker_id, np.full_name AS non_striker_name,
                 b.bowler_id, bp.full_name AS bowler_name,

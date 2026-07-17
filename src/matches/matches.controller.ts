@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Query, UseGuards,
+  Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Put, Query, UseGuards,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
@@ -167,6 +167,21 @@ class CommentaryDto {
 class AssignScorerDto {
   @IsUUID() user_id!: string;
   @IsOptional() @IsDateString() expires_at?: string;
+}
+
+class EditBallDto {
+  @IsOptional() @IsInt() @Min(0) @Max(7) runs_batter?: number;
+  @IsOptional() @IsIn(['wide', 'no_ball', 'bye', 'leg_bye']) extra_type?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(7) runs_extras?: number;
+  @IsOptional() @IsIn(['bye', 'leg_bye']) secondary_extra_type?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(7) secondary_extra_runs?: number;
+  @IsOptional() @IsBoolean() is_boundary_four?: boolean;
+  @IsOptional() @IsBoolean() is_boundary_six?: boolean;
+  @IsOptional() @IsIn(['bowled', 'caught', 'caught_behind', 'caught_and_bowled', 'lbw', 'run_out',
+    'stumped', 'hit_wicket', 'retired_hurt', 'retired_out', 'obstructing_field', 'timed_out',
+    'hit_ball_twice', 'handled_ball']) wicket_type?: string;
+  @IsOptional() @IsUUID() dismissed_player_id?: string;
+  @IsOptional() @IsUUID() fielder_id?: string;
 }
 
 // ---------------- Controller ----------------
@@ -416,5 +431,30 @@ export class MatchesController {
   async addCommentary(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload, @Body() dto: CommentaryDto) {
     await this.access.assertCanScore(id, user);
     return this.matches.addCommentary(id, user.sub, dto);
+  }
+
+  /** Returns whether the authenticated user has scoring access for this match. */
+  @Get('matches/:id/can-score')
+  @UseGuards(JwtAuthGuard)
+  async canScore(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    try {
+      await this.access.assertCanScore(id, user);
+      return { can_score: true };
+    } catch {
+      return { can_score: false };
+    }
+  }
+
+  /** Correct any ball: supersede + insert at same seq + replay innings. */
+  @Patch('matches/:id/balls/:ballId')
+  @UseGuards(JwtAuthGuard)
+  async editBall(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('ballId', ParseUUIDPipe) ballId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: EditBallDto,
+  ) {
+    await this.access.assertCanScore(id, user);
+    return this.scoring.editBall(id, ballId, dto, user.sub);
   }
 }
