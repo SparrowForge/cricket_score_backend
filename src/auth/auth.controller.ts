@@ -21,6 +21,10 @@ class ForgotPasswordDto {
   @IsEmail() email!: string;
 }
 
+class RefreshDto {
+  @IsString() @IsNotEmpty() refresh_token!: string;
+}
+
 class ResetPasswordDto {
   @IsEmail() email!: string;
   @IsString() @IsNotEmpty() token!: string;
@@ -42,6 +46,20 @@ export class AuthController {
   @Throttle({ default: { ttl: 60_000, limit: 5 } })
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto);
+  }
+
+  /** Rotate a refresh token for a new access/refresh pair. Single-use: the presented token is revoked. */
+  @Post('refresh')
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  refresh(@Body() dto: RefreshDto) {
+    return this.auth.refresh(dto.refresh_token);
+  }
+
+  /** Revoke the current session's refresh token. */
+  @Post('logout')
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  logout(@Body() dto: RefreshDto) {
+    return this.auth.logout(dto.refresh_token);
   }
 
   /** Sign in (or register) with a Google Identity Services credential. */

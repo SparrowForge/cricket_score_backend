@@ -8,9 +8,26 @@ import { PG_POOL } from '../database/database.module';
 import { MailService } from '../mail/mail.service';
 import { RegisterDto, LoginDto } from './dto';
 
+/** Comma-separated so mobile app client IDs (iOS / Android) can be added alongside the web one. */
+const googleAudiences = () =>
+  (process.env.GOOGLE_CLIENT_IDS ?? process.env.GOOGLE_CLIENT_ID ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+const REFRESH_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 30);
+
+/** '30m' / '12h' / '7d' / '3600' → seconds, for the expires_in response field. */
+function ttlSeconds(spec: string): number {
+  const m = /^(\d+)([smhd])?$/.exec(spec.trim());
+  if (!m) return 1800;
+  const mult = { s: 1, m: 60, h: 3600, d: 86400 }[m[2] ?? 's']!;
+  return Number(m[1]) * mult;
+}
+
 @Injectable()
 export class AuthService {
-  private readonly googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+  private readonly googleClient = new OAuth2Client();
 
   constructor(
     @Inject(PG_POOL) private readonly pool: Pool,
@@ -55,7 +72,7 @@ export class AuthService {
   async googleLogin(idToken: string) {
     let payload;
     try {
-      const ticket = await this.googleClient.verifyIdToken({ idToken, audience: process.env.GOOGLE_CLIENT_ID });
+      const ticket = await this.googleClient.verifyIdToken({ idToken, audience: googleAudiences() });
       payload = ticket.getPayload();
     } catch {
       throw new UnauthorizedException('Invalid Google credential');
@@ -165,6 +182,7 @@ export class AuthService {
     }
     const hash = await bcrypt.hash(dto.new_password, 12);
     await this.pool.query(`UPDATE users SET password_hash = $2 WHERE id = $1`, [userId, hash]);
+    await this.revokeAllSessions(userId);
     return { changed: true };
   }
 
@@ -211,6 +229,7 @@ export class AuthService {
       `UPDATE users SET password_hash = $2, metadata = metadata - 'pwreset' WHERE id = $1`,
       [user.id, newHash],
     );
+    await this.revokeAllSessions(user.id);
     return { reset: true };
   }
 
@@ -230,6 +249,50 @@ export class AuthService {
     return res.rows;
   }
 
+  /**
+   * Exchange a refresh token for a new token pair. Tokens are single-use
+   * (rotation): the presented session is revoked and a fresh one issued, so a
+   * stolen refresh token dies the first time either party reuses it.
+   */
+  async refresh(refreshToken: string) {
+    const hash = createHash('sha256').update(refreshToken).digest('hex');
+    const session = (
+      await this.pool.query(
+        `SELECT s.id, s.user_id, s.expires_at, s.revoked_at, u.email, u.status, u.deleted_at
+         FROM auth_sessions s JOIN users u ON u.id = s.user_id
+         WHERE s.refresh_token_hash = $1`,
+        [hash],
+      )
+    ).rows[0];
+    if (!session || session.revoked_at || new Date(session.expires_at) < new Date()) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+    if (session.deleted_at || session.status === 'suspended') {
+      await this.pool.query(`UPDATE auth_sessions SET revoked_at = now() WHERE id = $1`, [session.id]);
+      throw new UnauthorizedException('Account unavailable');
+    }
+    await this.pool.query(`UPDATE auth_sessions SET revoked_at = now() WHERE id = $1`, [session.id]);
+    return this.issueToken(session.user_id, session.email);
+  }
+
+  /** Revoke the presented session. Idempotent — unknown tokens are a no-op. */
+  async logout(refreshToken: string) {
+    const hash = createHash('sha256').update(refreshToken).digest('hex');
+    await this.pool.query(
+      `UPDATE auth_sessions SET revoked_at = now() WHERE refresh_token_hash = $1 AND revoked_at IS NULL`,
+      [hash],
+    );
+    return { logged_out: true };
+  }
+
+  /** Kill every active session — called on password change/reset. */
+  private async revokeAllSessions(userId: string) {
+    await this.pool.query(
+      `UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`,
+      [userId],
+    );
+  }
+
   private async issueToken(userId: string, email: string) {
     const roles = await this.pool.query(
       `SELECT r.slug FROM user_role_assignments ura
@@ -242,6 +305,17 @@ export class AuthService {
       email,
       roles: roles.rows.map((r) => r.slug),
     });
-    return { access_token, token_type: 'Bearer', expires_in: process.env.JWT_EXPIRES_IN ?? '7d' };
+    const refresh_token = randomBytes(48).toString('hex');
+    await this.pool.query(
+      `INSERT INTO auth_sessions (user_id, refresh_token_hash, expires_at)
+       VALUES ($1, $2, now() + make_interval(days => $3))`,
+      [userId, createHash('sha256').update(refresh_token).digest('hex'), REFRESH_TTL_DAYS],
+    );
+    return {
+      access_token,
+      refresh_token,
+      token_type: 'Bearer',
+      expires_in: ttlSeconds(process.env.JWT_EXPIRES_IN ?? '30m'),
+    };
   }
 }

@@ -388,7 +388,7 @@ export class ScoringService {
   }
 
   // ------------------------------------------------------------- new batter
-  async newBatter(matchId: string, dto: { player_id: string }) {
+  async newBatter(matchId: string, dto: { player_id: string; wicket_broken_end?: 'striker' | 'non_striker' }) {
     const out = await this.withMatch(matchId, async (client, match) => {
       const ls = match.live_state;
       if (!ls?.pending_new_batter) throw new BadRequestException('No new batter required');
@@ -396,9 +396,73 @@ export class ScoringService {
       if (ls.batters[dto.player_id]?.out) throw new BadRequestException('Player is already out');
 
       const dismissed = ls.pending_new_batter;
-      if (ls.engine.strikerId === dismissed) ls.engine.strikerId = dto.player_id;
-      else if (ls.engine.nonStrikerId === dismissed) ls.engine.nonStrikerId = dto.player_id;
-      else ls.engine.strikerId = dto.player_id; // safety net
+      let nextStrikerId = dto.player_id;
+
+      // For run-outs, apply the sophisticated state machine logic
+      const lastBall = (await client.query(
+        `SELECT runs_batter, runs_extras, wicket_type, dismissed_player_id, striker_id, non_striker_id
+         FROM balls WHERE innings_id = $1 AND NOT is_superseded AND wicket_type = 'run_out'
+         ORDER BY seq DESC LIMIT 1`,
+        [ls.innings_id],
+      )).rows[0];
+
+      if (lastBall && lastBall.wicket_type === 'run_out') {
+        // Determine which end the wicket was broken at (must be provided for run-outs)
+        const wicketBrokenEnd = dto.wicket_broken_end;
+        if (!wicketBrokenEnd) {
+          throw new BadRequestException('wicket_broken_end is required for run-out dismissals');
+        }
+
+        // Calculate completed runs (includes both batter runs and extras)
+        const completedRuns = (lastBall.runs_batter ?? 0) + (lastBall.runs_extras ?? 0);
+
+        // Determine if batters crossed based on completed runs (odd = crossed, even = didn't cross)
+        const didTheyFaCross = completedRuns % 2 === 1;
+
+        // Identify original positions
+        const originalStrikerId = lastBall.striker_id;
+        const originalNonStrikerId = lastBall.non_striker_id;
+        const dismissedPlayerId = dismissed;
+
+        // ========== Universal Resolution Matrix ==========
+        // Apply the 4-quadrant state machine for run-out scenarios
+        if (wicketBrokenEnd === 'striker') {
+          // Wicket broken at Striker End
+          if (dismissedPlayerId === originalStrikerId) {
+            // Original Striker dismissed at Striker End (no crossing)
+            nextStrikerId = dto.player_id; // Player C (new batter)
+            // Non-striker stays at Non-Striker end
+          } else if (dismissedPlayerId === originalNonStrikerId) {
+            // Original Non-Striker dismissed at Striker End (they crossed)
+            nextStrikerId = dto.player_id; // Player C (new batter)
+            // Original Striker moved to Non-Striker end
+          }
+        } else if (wicketBrokenEnd === 'non_striker') {
+          // Wicket broken at Non-Striker End
+          if (dismissedPlayerId === originalStrikerId) {
+            // Original Striker dismissed at Non-Striker End (they crossed)
+            nextStrikerId = originalNonStrikerId; // Original Non-Striker becomes next striker
+            // Original Non-Striker is now at Striker end (already there from crossing)
+          } else if (dismissedPlayerId === originalNonStrikerId) {
+            // Original Non-Striker dismissed at Non-Striker End (no crossing)
+            nextStrikerId = originalStrikerId; // Original Striker stays at Striker end
+          }
+        }
+      } else {
+        // For non-run-out dismissals, use simple replacement logic
+        if (ls.engine.strikerId === dismissed) nextStrikerId = dto.player_id;
+        else if (ls.engine.nonStrikerId === dismissed) nextStrikerId = dto.player_id;
+        else nextStrikerId = dto.player_id; // safety net
+      }
+
+      // Determine which position the new batter takes
+      if (ls.engine.strikerId === dismissed) {
+        ls.engine.strikerId = nextStrikerId;
+      } else if (ls.engine.nonStrikerId === dismissed) {
+        ls.engine.nonStrikerId = nextStrikerId;
+      } else {
+        ls.engine.strikerId = nextStrikerId; // safety net
+      }
 
       (ls.batters[dismissed] ??= await this.batterCard(client, dismissed)).out = true;
       ls.batters[dto.player_id] ??= await this.batterCard(client, dto.player_id);

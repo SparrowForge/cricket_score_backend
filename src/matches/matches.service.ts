@@ -1,7 +1,14 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import Redis from 'ioredis';
 import { Pool } from 'pg';
 import { PG_POOL } from '../database/database.module';
+import { REDIS } from '../redis/redis.module';
 import { LiveStateService } from './live-state.service';
+
+// GET /matches/:id cache TTL. The key embeds the live-state seq, so a scored
+// ball always misses to a fresh key; the TTL only bounds staleness for
+// non-scoring edits (venue, officials, squad).
+const DETAIL_CACHE_TTL_S = 15;
 
 /** Scorecard dismissal line: 'caught Dhoni bowled Jadeja' | 'caught & bowled Jadeja' | 'run out Jadeja' | 'bowled Bumrah' … */
 type WicketRow = {
@@ -52,6 +59,7 @@ export function deepMerge(base: any, override: any): any {
 export class MatchesService {
   constructor(
     @Inject(PG_POOL) private readonly pool: Pool,
+    @Inject(REDIS) private readonly redis: Redis,
     private readonly live: LiveStateService,
   ) {}
 
@@ -145,6 +153,18 @@ export class MatchesService {
   }
 
   async get(id: string) {
+    // Viewers refetch on every ball; collapse that read storm onto Redis.
+    // Best-effort: any Redis failure falls through to Postgres.
+    let cacheKey: string | null = null;
+    try {
+      const state = await this.redis.get(`match:${id}:state`);
+      if (state) {
+        cacheKey = `match:${id}:detail:${JSON.parse(state).seq ?? 0}`;
+        const hit = await this.redis.get(cacheKey);
+        if (hit) return JSON.parse(hit);
+      }
+    } catch { /* serve from Postgres */ }
+
     const m = (
       await this.pool.query(
         `SELECT m.*, ta.name AS team_a_name, ta.short_name AS team_a_short, ta.logo_url AS team_a_logo,
@@ -186,6 +206,9 @@ export class MatchesService {
         [id],
       )
     ).rows;
+    if (cacheKey) {
+      void this.redis.set(cacheKey, JSON.stringify(m), 'EX', DETAIL_CACHE_TTL_S).catch(() => {});
+    }
     return m;
   }
 

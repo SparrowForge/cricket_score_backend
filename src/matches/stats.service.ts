@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
 import { PG_POOL } from '../database/database.module';
+import { PushService } from '../engagement/push.service';
 
 /**
  * Stats pipeline, run synchronously on match completion (no worker tier yet).
@@ -11,7 +12,10 @@ import { PG_POOL } from '../database/database.module';
 export class StatsService {
   private readonly logger = new Logger(StatsService.name);
 
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    private readonly push: PushService,
+  ) {}
 
   async finalizeMatch(matchId: string): Promise<void> {
     const client = await this.pool.connect();
@@ -31,6 +35,8 @@ export class StatsService {
       await this.notifyFollowers(client, match);
       await client.query('COMMIT');
       this.logger.log(`Stats finalized for match ${matchId}`);
+      // Post-commit, fire-and-forget: FCM mirrors the in-app result notification
+      void this.push.sendMatchResult(matchId).catch(() => {});
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
       throw err;
@@ -176,7 +182,7 @@ export class StatsService {
                          ELSE 0 END,
                   0) AS batting,
                 greatest(
-                  pms.wickets_taken * 10 + pms.maidens * 8 + pms.dot_balls * 0.5
+                  pms.wickets_taken * 8 + pms.maidens * 8 + pms.dot_balls * 0.5
                   + CASE WHEN pms.wickets_taken >= 5 THEN 16 WHEN pms.wickets_taken >= 3 THEN 8 ELSE 0 END
                   + CASE WHEN pms.balls_bowled > 0
                          THEN (pms.balls_bowled * mrr.rr / 6 - pms.runs_conceded) * 0.5

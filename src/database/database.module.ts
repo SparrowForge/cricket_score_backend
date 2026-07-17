@@ -16,7 +16,8 @@ export const PG_POOL = 'PG_POOL';
       useFactory: () =>
         new Pool({
           connectionString: process.env.DATABASE_URL,
-          ssl: { rejectUnauthorized: false },
+          // Verify the server certificate (Neon certs chain to a public CA).
+          ssl: true,
           max: 10,
           idleTimeoutMillis: 30_000,
           connectionTimeoutMillis: 10_000,
