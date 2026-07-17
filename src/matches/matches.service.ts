@@ -461,17 +461,35 @@ export class MatchesService {
     for (const inn of innings) {
       inn.batting = (
         await this.pool.query(
-          `SELECT p.id, p.full_name,
-                  count(*) FILTER (WHERE b.is_legal OR b.extra_type = 'no_ball')::int AS balls,
-                  coalesce(sum(b.runs_batter),0)::int AS runs,
-                  count(*) FILTER (WHERE b.is_boundary_four)::int AS fours,
-                  count(*) FILTER (WHERE b.is_boundary_six)::int AS sixes,
-                  false AS is_out,
-                  null::text AS dismissal
-           FROM balls b JOIN players p ON p.id = b.striker_id
-           WHERE b.innings_id = $1 AND NOT b.is_superseded
-           GROUP BY p.id, p.full_name
-           ORDER BY min(b.seq)`,
+          `SELECT id, full_name, balls, runs, fours, sixes, is_out, dismissal
+           FROM (
+             -- Batters who faced at least one delivery as striker
+             SELECT p.id, p.full_name,
+                    min(b.seq) AS first_seq, 0 AS tie_break,
+                    count(*) FILTER (WHERE b.is_legal OR b.extra_type = 'no_ball')::int AS balls,
+                    coalesce(sum(b.runs_batter),0)::int AS runs,
+                    count(*) FILTER (WHERE b.is_boundary_four)::int AS fours,
+                    count(*) FILTER (WHERE b.is_boundary_six)::int AS sixes,
+                    false AS is_out, null::text AS dismissal
+             FROM balls b JOIN players p ON p.id = b.striker_id
+             WHERE b.innings_id = $1 AND NOT b.is_superseded
+             GROUP BY p.id, p.full_name
+             UNION ALL
+             -- Non-striker batters dismissed before facing any delivery as striker
+             SELECT p.id, p.full_name,
+                    min(b.seq) AS first_seq, 1 AS tie_break,
+                    0::int AS balls, 0::int AS runs,
+                    0::int AS fours, 0::int AS sixes,
+                    false AS is_out, null::text AS dismissal
+             FROM balls b JOIN players p ON p.id = b.dismissed_player_id
+             WHERE b.innings_id = $1 AND b.is_wicket AND NOT b.is_superseded
+               AND b.dismissed_player_id IS NOT NULL
+               AND b.dismissed_player_id NOT IN (
+                 SELECT striker_id FROM balls WHERE innings_id = $1 AND NOT is_superseded
+               )
+             GROUP BY p.id, p.full_name
+           ) batters
+           ORDER BY first_seq, tie_break`,
           [inn.id],
         )
       ).rows;

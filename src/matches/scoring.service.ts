@@ -400,7 +400,7 @@ export class ScoringService {
       else if (ls.engine.nonStrikerId === dismissed) ls.engine.nonStrikerId = dto.player_id;
       else ls.engine.strikerId = dto.player_id; // safety net
 
-      if (ls.batters[dismissed]) ls.batters[dismissed].out = true;
+      (ls.batters[dismissed] ??= await this.batterCard(client, dismissed)).out = true;
       ls.batters[dto.player_id] ??= await this.batterCard(client, dto.player_id);
       ls.pending_new_batter = null;
 
@@ -1118,8 +1118,8 @@ export class ScoringService {
         bat.runs += b.runs_batter;
         if (b.is_boundary_four) bat.fours += 1;
         if (b.is_boundary_six) bat.sixes += 1;
-        if (b.is_wicket && b.dismissed_player_id && ls.batters[b.dismissed_player_id]) {
-          ls.batters[b.dismissed_player_id].out = true;
+        if (b.is_wicket && b.dismissed_player_id) {
+          (ls.batters[b.dismissed_player_id] ??= await this.batterCard(client, b.dismissed_player_id)).out = true;
         }
         // Byes/leg-byes (including any run off a no-ball) are never charged to the bowler.
         const bowlerRuns = b.runs_batter
