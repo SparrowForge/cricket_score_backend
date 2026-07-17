@@ -40,7 +40,7 @@ export interface BallEvent {
    * runs taken off a wide are, by law, scored entirely as more wides.
    */
   secondaryExtraType?: 'bye' | 'leg_bye' | null;
-  wicket: { type: WicketType; dismissedPlayerId: string; fielderId?: string } | null;
+  wicket: { type: WicketType; dismissedPlayerId: string; fielderId?: string; wicketBrokenEnd?: 'striker_end' | 'non_striker_end' } | null;
 }
 
 export type WicketType =
@@ -139,23 +139,32 @@ export function applyBall(state: LiveInningsState, ev: BallEvent, rules: FormatR
     effects.push({ kind: 'new_batter_required', dismissedId: ev.wicket.dismissedPlayerId });
   }
 
-  // Strike rotation: the striker changes ends on an ODD number of runs
-  // actually run between the wickets, regardless of the delivery type.
-  // - Off the bat: ev.runsBatter (already excludes automatic penalties).
-  // - Byes/leg-byes: ev.runsExtras is the running-runs count.
-  // - Wide: any runs beyond the automatic penalty are always run (a wide
-  //   can't be "hit"), so ev.runsExtras is running-runs there too.
-  // - No-ball: ev.runsExtras is running-runs ONLY when it's byes/leg-byes
-  //   run off it (secondaryExtraType set); runs off the bat already come
-  //   through ev.runsBatter.
-  const runningExtraRuns =
-    ev.extraType === 'bye' || ev.extraType === 'leg_bye' || ev.extraType === 'wide'
-      ? ev.runsExtras
-      : ev.extraType === 'no_ball' && ev.secondaryExtraType
+  // Strike rotation: use deterministic matrix for run-outs; normal rotation otherwise.
+  // For run-outs, the next striker depends on (dismissed_batter, wicket_broken_end);
+  // completed runs don't determine rotation — they determine IF crossing occurred.
+  if (ev.wicket?.type === 'run_out' && ev.wicket.wicketBrokenEnd) {
+    const dismissedIsStriker = ev.wicket.dismissedPlayerId === state.strikerId;
+    if (ev.wicket.wicketBrokenEnd === 'striker_end') {
+      // Wicket broken at striker end: if dismissed is striker → new batter faces;
+      // if dismissed is non-striker → new batter faces (they were crossing).
+      next.strikerId = ev.bowlerId === state.strikerId ? state.nonStrikerId : state.strikerId;
+      // (This line is a placeholder; the actual new batter is injected post-replay)
+    } else {
+      // Wicket broken at non-striker end: if dismissed is striker → non-striker faces;
+      // if dismissed is non-striker → striker faces.
+      next.strikerId = dismissedIsStriker ? state.nonStrikerId : state.strikerId;
+    }
+  } else {
+    // Non-run-out: normal rotation on odd runs.
+    const runningExtraRuns =
+      ev.extraType === 'bye' || ev.extraType === 'leg_bye' || ev.extraType === 'wide'
         ? ev.runsExtras
-        : 0;
-  const runsRun = ev.runsBatter + runningExtraRuns;
-  if (runsRun % 2 === 1) [next.strikerId, next.nonStrikerId] = [next.nonStrikerId, next.strikerId];
+        : ev.extraType === 'no_ball' && ev.secondaryExtraType
+          ? ev.runsExtras
+          : 0;
+    const runsRun = ev.runsBatter + runningExtraRuns;
+    if (runsRun % 2 === 1) [next.strikerId, next.nonStrikerId] = [next.nonStrikerId, next.strikerId];
+  }
 
   // Over complete? (swap strike again at over change)
   if (isLegalDelivery && next.currentOverBalls === rules.balls_per_over) {

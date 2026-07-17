@@ -172,7 +172,7 @@ export class ScoringService {
         runsExtras: dto.runs_extras ?? 0,
         secondaryExtraType: dto.extra_type === 'no_ball' ? (dto.secondary_extra_type ?? null) : null,
         wicket: dto.wicket
-          ? { type: dto.wicket.type, dismissedPlayerId: dto.wicket.dismissed_player_id ?? ls.engine.strikerId, fielderId: dto.wicket.fielder_id }
+          ? { type: dto.wicket.type, dismissedPlayerId: dto.wicket.dismissed_player_id ?? ls.engine.strikerId, fielderId: dto.wicket.fielder_id, wicketBrokenEnd: dto.wicket.wicket_broken_end }
           : null,
       };
 
@@ -439,7 +439,7 @@ export class ScoringService {
     runs_batter?: number; extra_type?: string; runs_extras?: number;
     secondary_extra_type?: string; secondary_extra_runs?: number;
     is_boundary_four?: boolean; is_boundary_six?: boolean;
-    wicket_type?: string; dismissed_player_id?: string; fielder_id?: string;
+    wicket_type?: string; dismissed_player_id?: string; fielder_id?: string; wicket_broken_end?: string;
   }, userId: string) {
     const out = await this.withMatch(matchId, async (client, match) => {
       const rules: FormatRules = match.rules_snapshot;
@@ -470,10 +470,10 @@ export class ScoringService {
                             is_legal, runs_batter, runs_extras, extra_type,
                             secondary_extra_type, secondary_extra_runs,
                             is_boundary_four, is_boundary_six, is_free_hit,
-                            is_wicket, wicket_type, dismissed_player_id, fielder_id,
+                            is_wicket, wicket_type, dismissed_player_id, fielder_id, wicket_broken_end,
                             wagon, pitch, shot_type, client_event_id, scored_by, supersedes_ball_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
-                 gen_random_uuid(),$24,$25)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,
+                 gen_random_uuid(),$25,$26)
          RETURNING id`,
         [orig.innings_id, orig.seq, orig.over_number, orig.ball_in_over,
           orig.striker_id, orig.non_striker_id, orig.bowler_id,
@@ -481,7 +481,7 @@ export class ScoringService {
           dto.secondary_extra_type ?? null, dto.secondary_extra_runs ?? 0,
           isFour, isSix, orig.is_free_hit,
           !!dto.wicket_type, dto.wicket_type ?? null,
-          dto.dismissed_player_id ?? orig.striker_id, dto.fielder_id ?? null,
+          dto.dismissed_player_id ?? orig.striker_id, dto.fielder_id ?? null, dto.wicket_broken_end ?? null,
           orig.wagon, orig.pitch, orig.shot_type, userId, ballId],
       );
 
@@ -507,7 +507,7 @@ export class ScoringService {
           strikerId: b.striker_id, nonStrikerId: b.non_striker_id, bowlerId: b.bowler_id,
           runsBatter: b.runs_batter, extraType: b.extra_type, runsExtras: b.runs_extras - pen,
           secondaryExtraType: b.secondary_extra_type ?? null,
-          wicket: b.is_wicket ? { type: b.wicket_type, dismissedPlayerId: b.dismissed_player_id, fielderId: b.fielder_id } : null,
+          wicket: b.is_wicket ? { type: b.wicket_type, dismissedPlayerId: b.dismissed_player_id, fielderId: b.fielder_id, wicketBrokenEnd: b.wicket_broken_end } : null,
         }, rules);
         if (r.ok) partialEng = r.next;
         if (b.id === newBallId) break;
@@ -529,6 +529,7 @@ export class ScoringService {
           type: dto.wicket_type as import('./rules-engine').WicketType,
           dismissedPlayerId: dto.dismissed_player_id ?? orig.striker_id,
           fielderId: dto.fielder_id ?? undefined,
+          wicketBrokenEnd: dto.wicket_broken_end as 'striker_end' | 'non_striker_end' | undefined,
         } : null,
       };
       const newBody = this.commentaryText(
@@ -1107,7 +1108,7 @@ export class ScoringService {
           runsBatter: b.runs_batter, extraType: b.extra_type,
           runsExtras: b.runs_extras - autoPenalty,
           secondaryExtraType: b.secondary_extra_type ?? null,
-          wicket: b.is_wicket ? { type: b.wicket_type, dismissedPlayerId: b.dismissed_player_id, fielderId: b.fielder_id } : null,
+          wicket: b.is_wicket ? { type: b.wicket_type, dismissedPlayerId: b.dismissed_player_id, fielderId: b.fielder_id, wicketBrokenEnd: b.wicket_broken_end } : null,
         };
         const r = applyBall(engine, ev, rules);
         if (r.ok) engine = r.next;

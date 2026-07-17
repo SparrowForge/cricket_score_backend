@@ -70,6 +70,8 @@ class WicketDto {
   /** Defaults to the striker */
   @IsOptional() @IsUUID() dismissed_player_id?: string;
   @IsOptional() @IsUUID() fielder_id?: string;
+  /** For run-outs: which end was the wicket broken at */
+  @IsOptional() @IsIn(['striker_end', 'non_striker_end']) wicket_broken_end?: string;
 }
 
 class BallDto {
@@ -182,6 +184,7 @@ class EditBallDto {
     'hit_ball_twice', 'handled_ball']) wicket_type?: string;
   @IsOptional() @IsUUID() dismissed_player_id?: string;
   @IsOptional() @IsUUID() fielder_id?: string;
+  @IsOptional() @IsIn(['striker_end', 'non_striker_end']) wicket_broken_end?: string;
 }
 
 // ---------------- Controller ----------------
