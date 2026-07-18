@@ -160,7 +160,14 @@ export class ScoringService {
 
       // Update the settable fields in rules
       if (dto.overs_per_innings !== undefined) rules.overs_per_innings = dto.overs_per_innings;
-      if (dto.players_per_side !== undefined) rules.players_per_side = dto.players_per_side;
+      if (dto.players_per_side !== undefined) {
+        rules.players_per_side = dto.players_per_side;
+        // wickets_to_fall drives all-out detection and the "N all out" label.
+        // Every built-in format keeps it at players_per_side − 1, and the
+        // settings form doesn't expose it, so derive it here — leaving it stale
+        // ends the innings after the wrong number of wickets.
+        rules.wickets_to_fall = Math.max(1, dto.players_per_side - 1);
+      }
       if (dto.max_overs_per_bowler !== undefined) rules.max_overs_per_bowler = dto.max_overs_per_bowler;
       if (dto.free_hit !== undefined) {
         if (!rules.no_ball) rules.no_ball = { runs: 1, free_hit: dto.free_hit };
@@ -1380,7 +1387,11 @@ export class ScoringService {
     // was scored) — there is no striker/bowler to resume with, so drop back to
     // innings_break instead of a broken 'live' state; openers() will accept a
     // fresh selection from there.
-    const newStatus = engine ? 'live' : 'innings_break';
+    // A finished match keeps its status: correcting a ball in the final innings
+    // must not resurrect it to 'live' (its result stands until re-finalized).
+    const finished = ['completed', 'abandoned', 'no_result', 'cancelled', 'forfeited']
+      .includes(match.status);
+    const newStatus = finished ? match.status : engine ? 'live' : 'innings_break';
     await client.query(
       `UPDATE matches SET live_state = $2, live_state_seq = $3, status = $4 WHERE id = $1`,
       [match.id, JSON.stringify(ls), newSeq, newStatus],
