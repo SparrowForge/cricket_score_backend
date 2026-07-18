@@ -84,6 +84,25 @@ export class ScoringService {
     return out;
   }
 
+  async undoToss(matchId: string) {
+    const out = await this.withMatch(matchId, async (client, match) => {
+      if (match.status !== 'toss') {
+        throw new BadRequestException(`Cannot undo toss from status: ${match.status} (only from 'toss')`);
+      }
+      // Delete the empty first innings that was created during toss
+      await client.query(`DELETE FROM innings WHERE match_id = $1`, [matchId]);
+      // Reset all toss+scoring state
+      await client.query(
+        `UPDATE matches SET status = 'scheduled', toss_winner_id = NULL, toss_decision = NULL,
+                            live_state = NULL, actual_start = NULL WHERE id = $1`,
+        [matchId],
+      );
+      return { status: 'scheduled' };
+    });
+    await this.live.syncAndPublish(matchId, 'status', { transition: 'scheduled' });
+    return out;
+  }
+
   // ------------------------------------------------------------ open innings
   async openers(matchId: string, dto: { striker_id: string; non_striker_id: string; bowler_id: string }) {
     const out = await this.withMatch(matchId, async (client, match) => {

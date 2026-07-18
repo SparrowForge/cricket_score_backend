@@ -332,6 +332,14 @@ export class MatchesController {
     return this.scoring.toss(id, dto);
   }
 
+  /** Undo the toss: go back from 'toss' status to 'scheduled', allowing re-selection of squads or re-doing the toss. */
+  @Delete('matches/:id/toss')
+  @UseGuards(JwtAuthGuard)
+  async undoToss(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    await this.access.assertCanScore(id, user);
+    return this.scoring.undoToss(id);
+  }
+
   /** Set opening batters + bowler; match goes live. Also used after an innings break. */
   @Post('matches/:id/openers')
   @UseGuards(JwtAuthGuard)
