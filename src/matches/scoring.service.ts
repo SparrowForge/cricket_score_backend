@@ -162,6 +162,10 @@ export class ScoringService {
         throw new ConflictException({ code: 'SEQ_CONFLICT', current_seq: Number(match.live_state_seq) });
       }
 
+      if (dto.wicket?.type === 'run_out' && !dto.wicket.wicket_broken_end) {
+        throw new BadRequestException({ code: 'WICKET_BROKEN_END_REQUIRED', message: 'wicket_broken_end is required for run_out dismissals' });
+      }
+
       const bowlerId = dto.bowler_id ?? ls.current_bowler;
       const ev: BallEvent = {
         strikerId: ls.engine.strikerId,
@@ -200,15 +204,15 @@ export class ScoringService {
         `INSERT INTO balls (innings_id, seq, over_number, ball_in_over, striker_id, non_striker_id, bowler_id,
                             is_legal, runs_batter, runs_extras, extra_type, secondary_extra_type, secondary_extra_runs,
                             is_boundary_four, is_boundary_six,
-                            is_free_hit, is_wicket, wicket_type, dismissed_player_id, fielder_id,
+                            is_free_hit, is_wicket, wicket_type, dismissed_player_id, fielder_id, wicket_broken_end,
                             wagon, pitch, shot_type, client_event_id, scored_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
          RETURNING id, seq`,
         [ls.innings_id, post.seq, overNumber, ballInOver, ev.strikerId, ev.nonStrikerId, bowlerId,
          isLegal, ev.runsBatter, totalExtras, ev.extraType, ev.secondaryExtraType ?? null, secondaryExtraRuns,
          isFour, isSix,
          pre.freeHitPending, !!ev.wicket, ev.wicket?.type ?? null, ev.wicket?.dismissedPlayerId ?? null,
-         ev.wicket?.fielderId ?? null,
+         ev.wicket?.fielderId ?? null, ev.wicket?.wicketBrokenEnd ?? null,
          dto.wagon ? JSON.stringify(dto.wagon) : null, dto.pitch ? JSON.stringify(dto.pitch) : null,
          dto.shot_type ?? null, dto.client_event_id, userId],
       );
