@@ -804,6 +804,18 @@ export class ScoringService {
   async ballBatch(matchId: string, userId: string, items: any[]) {
     const results: any[] = [];
     for (const item of items) {
+      // Dedupe before any liveness/state validation: a re-sent ball whose
+      // original application ended the innings (or match) must come back as
+      // 'duplicate', not 'conflict', or the offline outbox retries it forever.
+      const dup = await this.pool.query(
+        `SELECT b.seq FROM balls b JOIN innings i ON i.id = b.innings_id
+         WHERE i.match_id = $1 AND b.client_event_id = $2`,
+        [matchId, item.client_event_id],
+      );
+      if (dup.rowCount! > 0) {
+        results.push({ client_event_id: item.client_event_id, status: 'duplicate', seq: dup.rows[0].seq });
+        continue;
+      }
       try {
         const r = await this.ball(matchId, userId, { ...item, expected_seq: undefined });
         results.push({
