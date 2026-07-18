@@ -68,6 +68,7 @@ export class MatchesService {
       await this.pool.query(
         `SELECT m.id, m.match_number, m.stage, m.stage_label, m.status, m.scheduled_start,
                 m.result_summary, m.tournament_id, m.winner_team_id,
+                m.toss_winner_id, m.toss_decision,
                 ta.id AS team_a_id, ta.name AS team_a, ta.short_name AS team_a_short, ta.logo_url AS team_a_logo,
                 tb.id AS team_b_id, tb.name AS team_b, tb.short_name AS team_b_short, tb.logo_url AS team_b_logo,
                 v.name AS venue, t.name AS tournament_name,
