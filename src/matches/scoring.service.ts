@@ -116,6 +116,69 @@ export class ScoringService {
     return out;
   }
 
+  // ------------------------------------------------------------ settings
+  async updateSettings(
+    matchId: string,
+    dto: {
+      overs_per_innings?: number;
+      players_per_side?: number;
+      max_overs_per_bowler?: number | null;
+      free_hit?: boolean;
+      dls_enabled?: boolean;
+    },
+  ) {
+    const out = await this.withMatch(matchId, async (client, match) => {
+      // Allow editing settings before toss or between innings (not during live play)
+      if (!['scheduled', 'toss', 'innings_break'].includes(match.status)) {
+        throw new BadRequestException(
+          `Cannot edit settings during active play (status: ${match.status})`,
+        );
+      }
+
+      // Start with existing rules_snapshot or build from format
+      let rules: FormatRules;
+      if (match.rules_snapshot) {
+        rules = { ...match.rules_snapshot };
+      } else if (match.tournament_id) {
+        const t = (
+          await client.query(
+            `SELECT f.rules, t.rule_overrides FROM tournaments t
+             JOIN match_formats f ON f.id = t.format_id WHERE t.id = $1`,
+            [match.tournament_id],
+          )
+        ).rows[0];
+        rules = deepMerge(t.rules, t.rule_overrides);
+      } else {
+        // Default T20
+        const fmt = (
+          await client.query(
+            `SELECT rules FROM match_formats WHERE id = (SELECT id FROM match_formats WHERE name = 'T20 Internationals' LIMIT 1)`,
+          )
+        ).rows[0];
+        rules = fmt?.rules || {};
+      }
+
+      // Update the settable fields in rules
+      if (dto.overs_per_innings !== undefined) rules.overs_per_innings = dto.overs_per_innings;
+      if (dto.players_per_side !== undefined) rules.players_per_side = dto.players_per_side;
+      if (dto.max_overs_per_bowler !== undefined) rules.max_overs_per_bowler = dto.max_overs_per_bowler;
+      if (dto.free_hit !== undefined) {
+        if (!rules.no_ball) rules.no_ball = { runs: 1, free_hit: dto.free_hit };
+        else rules.no_ball.free_hit = dto.free_hit;
+      }
+      if (dto.dls_enabled !== undefined) {
+        if (!rules.dls) rules.dls = { enabled: dto.dls_enabled, method: 'DLS' };
+        else rules.dls.enabled = dto.dls_enabled;
+      }
+
+      // Update match rules_snapshot
+      await client.query(`UPDATE matches SET rules_snapshot = $1 WHERE id = $2`, [rules, matchId]);
+      return { rules_snapshot: rules, status: match.status };
+    });
+    await this.live.syncAndPublish(matchId, 'settings', { rules_snapshot: out.rules_snapshot });
+    return out;
+  }
+
   // ------------------------------------------------------------ open innings
   async openers(matchId: string, dto: { striker_id: string; non_striker_id: string; bowler_id: string }) {
     const out = await this.withMatch(matchId, async (client, match) => {

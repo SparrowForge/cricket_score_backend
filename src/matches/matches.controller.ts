@@ -127,6 +127,14 @@ class ResumeDto {
   @IsOptional() @IsString() method?: string;
 }
 
+class UpdateMatchSettingsDto {
+  @IsOptional() @IsInt() @Min(1) overs_per_innings?: number;
+  @IsOptional() @IsInt() @Min(1) players_per_side?: number;
+  @IsOptional() @IsInt() @Min(1) max_overs_per_bowler?: number | null;
+  @IsOptional() @IsBoolean() free_hit?: boolean;
+  @IsOptional() @IsBoolean() dls_enabled?: boolean;
+}
+
 class BallBatchDto {
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => BallDto)
   balls!: BallDto[];
@@ -338,6 +346,18 @@ export class MatchesController {
   async undoToss(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
     await this.access.assertCanScore(id, user);
     return this.scoring.undoToss(id);
+  }
+
+  /** Edit match settings (overs, players per side, max overs per bowler, free hit, DLS) before or between innings. */
+  @Patch('matches/:id/settings')
+  @UseGuards(JwtAuthGuard)
+  async updateSettings(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateMatchSettingsDto,
+  ) {
+    await this.access.assertCanScore(id, user);
+    return this.scoring.updateSettings(id, dto);
   }
 
   /** Set opening batters + bowler; match goes live. Also used after an innings break. */
