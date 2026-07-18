@@ -86,10 +86,23 @@ export class ScoringService {
 
   async undoToss(matchId: string) {
     const out = await this.withMatch(matchId, async (client, match) => {
-      if (match.status !== 'toss') {
-        throw new BadRequestException(`Cannot undo toss from status: ${match.status} (only from 'toss')`);
+      // Allow undo from either 'toss' (before openers) or 'innings_break' (after 1st innings).
+      if (!['toss', 'innings_break'].includes(match.status)) {
+        throw new BadRequestException(
+          `Cannot undo toss from status: ${match.status} (only from 'toss' or 'innings_break' after first innings)`,
+        );
       }
-      // Delete the empty first innings that was created during toss
+      // If in innings_break, verify there's only 1 completed innings (i.e., just finished innings 1).
+      if (match.status === 'innings_break') {
+        const innings = (await client.query(`SELECT count(*)::int AS n FROM innings WHERE match_id = $1`, [matchId]))
+          .rows[0].n;
+        if (innings > 1) {
+          throw new BadRequestException(
+            'Cannot undo toss after 2+ innings have started — use undo-innings-close instead',
+          );
+        }
+      }
+      // Delete all innings (the empty first one from toss, and any later incomplete ones)
       await client.query(`DELETE FROM innings WHERE match_id = $1`, [matchId]);
       // Reset all toss+scoring state
       await client.query(
