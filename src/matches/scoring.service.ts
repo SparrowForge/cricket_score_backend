@@ -904,62 +904,11 @@ export class ScoringService {
     );
 
     // ---- Innings summary commentary (sorts above the over summary's +1ms nudge) ----
-    const inn = (
-      await client.query(
-        `SELECT i.total_runs, i.total_wickets, i.legal_balls, t.name AS team_name
-         FROM innings i JOIN teams t ON t.id = i.batting_team_id WHERE i.id = $1`,
-        [ls.innings_id],
-      )
-    ).rows[0];
-    const bpoInn = rules.balls_per_over ?? 6;
-    const topBatters = (
-      await client.query(
-        `SELECT p.full_name, sum(b.runs_batter)::int AS runs,
-                count(*) FILTER (WHERE b.extra_type IS DISTINCT FROM 'wide')::int AS balls,
-                count(*) FILTER (WHERE b.is_boundary_four)::int AS fours,
-                count(*) FILTER (WHERE b.is_boundary_six)::int AS sixes
-         FROM balls b JOIN players p ON p.id = b.striker_id
-         WHERE b.innings_id = $1 AND NOT b.is_superseded
-         GROUP BY p.full_name ORDER BY runs DESC, balls ASC LIMIT 2`,
-        [ls.innings_id],
-      )
-    ).rows;
-    const topBowlers = (
-      await client.query(
-        `SELECT p.full_name,
-                count(*) FILTER (WHERE b.is_legal)::int AS legal_balls,
-                sum(b.runs_batter + CASE WHEN b.extra_type IN ('wide','no_ball')
-                     THEN b.runs_extras - b.secondary_extra_runs ELSE 0 END)::int AS runs,
-                count(*) FILTER (WHERE b.is_wicket AND b.wicket_type NOT IN
-                  ('run_out','retired_hurt','retired_out','obstructing_field','timed_out'))::int AS wickets,
-                (SELECT count(*) FROM over_summaries os
-                  WHERE os.innings_id = $1 AND os.bowler_id = b.bowler_id AND os.is_maiden)::int AS maidens
-         FROM balls b JOIN players p ON p.id = b.bowler_id
-         WHERE b.innings_id = $1 AND NOT b.is_superseded
-         GROUP BY b.bowler_id, p.full_name ORDER BY wickets DESC, runs ASC LIMIT 2`,
-        [ls.innings_id],
-      )
-    ).rows;
-    // " | " section separators keep the body parseable on the client even
-    // though player names contain periods ("Md. …").
-    const batTxt = topBatters.map((b) => {
-      const parts = [`${b.balls}`];
-      if (b.sixes > 0) parts.push(`${b.sixes}x6`);
-      if (b.fours > 0) parts.push(`${b.fours}x4`);
-      return `${b.full_name} ${b.runs}(${parts.join(', ')})`;
-    }).join(' · ');
-    const bowlTxt = topBowlers.map((b) =>
-      `${b.full_name} ${Math.floor(b.legal_balls / bpoInn)}.${b.legal_balls % bpoInn}-${b.maidens}-${b.runs}-${b.wickets}`,
-    ).join(' · ');
     await client.query(
       `INSERT INTO commentary_entries (match_id, innings_id, source, body, is_highlight, created_at)
        VALUES ($1, $2, 'auto', $3, true, now() + interval '2 milliseconds')`,
       [match.id, ls.innings_id,
-       `End of innings ${ls.innings_seq}: ${inn.team_name} ${inn.total_runs}/${inn.total_wickets} ` +
-         `(${Math.floor(inn.legal_balls / bpoInn)}.${inn.legal_balls % bpoInn} ov)` +
-         (reason === 'declared' ? ' — declared.' : reason === 'forfeited' ? ' — forfeited.' : '.') +
-         (batTxt ? ` | BAT: ${batTxt}` : '') +
-         (bowlTxt ? ` | BOWL: ${bowlTxt}` : '')],
+       await this.inningsSummaryBody(client, ls.innings_id, ls.innings_seq, rules, reason)],
     );
     const totalInnings = (rules.innings_per_side ?? 1) * 2;
     if (ls.innings_seq >= totalInnings) return; // match end handled by match_complete effect
@@ -1355,6 +1304,41 @@ export class ScoringService {
       [inningsId, agg.runs, agg.wkts, agg.legal, agg.wides, agg.nbs, agg.byes, agg.lbs],
     );
 
+    // The end-of-innings card is auto commentary too, but it hangs off the
+    // innings rather than a ball (ball_id IS NULL), so the ball-keyed rebuild
+    // above skips it — regenerate it here or it keeps quoting the score from
+    // before the correction. Must run after the totals update just above.
+    if (['completed', 'declared', 'forfeited'].includes(innings.status)) {
+      // Reuse the existing card's timestamp. Innings scored before this card
+      // existed have none, so fall back to just after the innings' last ball
+      // rather than now() — otherwise the card lands at today's date and sorts
+      // to the top of the feed instead of at the end of its innings.
+      const prevTs = (
+        await client.query(
+          `SELECT coalesce(
+                    (SELECT created_at FROM commentary_entries
+                      WHERE innings_id = $1 AND source = 'auto' AND ball_id IS NULL
+                      ORDER BY created_at LIMIT 1),
+                    (SELECT max(created_at) + interval '2 milliseconds' FROM commentary_entries
+                      WHERE innings_id = $1 AND source = 'auto' AND ball_id IS NOT NULL)
+                  ) AS ts`,
+          [inningsId],
+        )
+      ).rows[0]?.ts ?? null;
+      await client.query(
+        `DELETE FROM commentary_entries WHERE innings_id = $1 AND source = 'auto' AND ball_id IS NULL`,
+        [inningsId],
+      );
+      await client.query(
+        `INSERT INTO commentary_entries (match_id, innings_id, source, body, is_highlight, created_at)
+         VALUES ($1,$2,'auto',$3,true,
+                 coalesce($4::timestamptz, now() + interval '2 milliseconds'))`,
+        [match.id, inningsId,
+         await this.inningsSummaryBody(client, inningsId, innings.seq, rules, innings.status),
+         prevTs],
+      );
+    }
+
     // This innings' total feeds the chase target of the innings that follows
     // (target = opponent aggregate − own aggregate + 1), so a correction here
     // has to move that target too — otherwise the run chase keeps showing the
@@ -1447,6 +1431,70 @@ export class ScoringService {
   private async bowlerCard(client: PoolClient, playerId: string) {
     const p = (await client.query(`SELECT full_name FROM players WHERE id = $1`, [playerId])).rows[0];
     return { name: p?.full_name ?? 'Unknown', legal_balls: 0, runs: 0, wickets: 0, maidens: 0 };
+  }
+
+  /**
+   * Body of the end-of-innings summary card. Derived entirely from stored balls
+   * and innings totals, so replayInnings can rebuild it verbatim after a
+   * correction — `reason` also accepts the innings' own status ('declared' /
+   * 'forfeited' / 'completed'), which is what the replay path passes.
+   */
+  private async inningsSummaryBody(
+    client: PoolClient, inningsId: string, inningsSeq: number,
+    rules: FormatRules, reason: string,
+  ): Promise<string> {
+    const inn = (
+      await client.query(
+        `SELECT i.total_runs, i.total_wickets, i.legal_balls, t.name AS team_name
+         FROM innings i JOIN teams t ON t.id = i.batting_team_id WHERE i.id = $1`,
+        [inningsId],
+      )
+    ).rows[0];
+    const bpoInn = rules.balls_per_over ?? 6;
+    const topBatters = (
+      await client.query(
+        `SELECT p.full_name, sum(b.runs_batter)::int AS runs,
+                count(*) FILTER (WHERE b.extra_type IS DISTINCT FROM 'wide')::int AS balls,
+                count(*) FILTER (WHERE b.is_boundary_four)::int AS fours,
+                count(*) FILTER (WHERE b.is_boundary_six)::int AS sixes
+         FROM balls b JOIN players p ON p.id = b.striker_id
+         WHERE b.innings_id = $1 AND NOT b.is_superseded
+         GROUP BY p.full_name ORDER BY runs DESC, balls ASC LIMIT 2`,
+        [inningsId],
+      )
+    ).rows;
+    const topBowlers = (
+      await client.query(
+        `SELECT p.full_name,
+                count(*) FILTER (WHERE b.is_legal)::int AS legal_balls,
+                sum(b.runs_batter + CASE WHEN b.extra_type IN ('wide','no_ball')
+                     THEN b.runs_extras - b.secondary_extra_runs ELSE 0 END)::int AS runs,
+                count(*) FILTER (WHERE b.is_wicket AND b.wicket_type NOT IN
+                  ('run_out','retired_hurt','retired_out','obstructing_field','timed_out'))::int AS wickets,
+                (SELECT count(*) FROM over_summaries os
+                  WHERE os.innings_id = $1 AND os.bowler_id = b.bowler_id AND os.is_maiden)::int AS maidens
+         FROM balls b JOIN players p ON p.id = b.bowler_id
+         WHERE b.innings_id = $1 AND NOT b.is_superseded
+         GROUP BY b.bowler_id, p.full_name ORDER BY wickets DESC, runs ASC LIMIT 2`,
+        [inningsId],
+      )
+    ).rows;
+    // " | " section separators keep the body parseable on the client even
+    // though player names contain periods ("Md. …").
+    const batTxt = topBatters.map((b) => {
+      const parts = [`${b.balls}`];
+      if (b.sixes > 0) parts.push(`${b.sixes}x6`);
+      if (b.fours > 0) parts.push(`${b.fours}x4`);
+      return `${b.full_name} ${b.runs}(${parts.join(', ')})`;
+    }).join(' · ');
+    const bowlTxt = topBowlers.map((b) =>
+      `${b.full_name} ${Math.floor(b.legal_balls / bpoInn)}.${b.legal_balls % bpoInn}-${b.maidens}-${b.runs}-${b.wickets}`,
+    ).join(' · ');
+    return `End of innings ${inningsSeq}: ${inn.team_name} ${inn.total_runs}/${inn.total_wickets} ` +
+      `(${Math.floor(inn.legal_balls / bpoInn)}.${inn.legal_balls % bpoInn} ov)` +
+      (reason === 'declared' ? ' — declared.' : reason === 'forfeited' ? ' — forfeited.' : '.') +
+      (batTxt ? ` | BAT: ${batTxt}` : '') +
+      (bowlTxt ? ` | BOWL: ${bowlTxt}` : '');
   }
 
   private commentaryText(
