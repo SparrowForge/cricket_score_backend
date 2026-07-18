@@ -584,69 +584,12 @@ export class ScoringService {
           orig.wagon, orig.pitch, orig.shot_type, userId, ballId],
       );
 
-      // 5. Partial replay up to the corrected ball to get score-at-ball for commentary
-      const innings = (await client.query(`SELECT * FROM innings WHERE id = $1`, [orig.innings_id])).rows[0];
-      const allBalls = (await client.query(
-        `SELECT * FROM balls WHERE innings_id = $1 AND NOT is_superseded ORDER BY seq`,
-        [orig.innings_id],
-      )).rows;
-      let partialEng: LiveInningsState = {
-        seq: (allBalls[0]?.seq ?? 1) - 1, totalRuns: 0, totalWickets: 0, legalBalls: 0,
-        maxOvers: innings.max_overs !== null ? Number(innings.max_overs) : null,
-        target: innings.target_runs, freeHitPending: false, currentOverBalls: 0,
-        lastOverBowlerId: null, bowlerLegalBalls: {},
-        strikerId: allBalls[0]?.striker_id ?? orig.striker_id,
-        nonStrikerId: allBalls[0]?.non_striker_id ?? orig.non_striker_id,
-        battersRetiredHurt: [],
-      };
-      for (const b of allBalls) {
-        const pen = b.extra_type === 'wide' ? (rules.wide?.runs ?? 1)
-          : b.extra_type === 'no_ball' ? (rules.no_ball?.runs ?? 1) : 0;
-        const r = applyBall(partialEng, {
-          strikerId: b.striker_id, nonStrikerId: b.non_striker_id, bowlerId: b.bowler_id,
-          runsBatter: b.runs_batter, extraType: b.extra_type, runsExtras: b.runs_extras - pen,
-          secondaryExtraType: b.secondary_extra_type ?? null,
-          wicket: b.is_wicket ? { type: b.wicket_type, dismissedPlayerId: b.dismissed_player_id, fielderId: b.fielder_id, wicketBrokenEnd: b.wicket_broken_end } : null,
-        }, rules);
-        if (r.ok) partialEng = r.next;
-        if (b.id === newBallId) break;
-      }
-
-      // 6. Regenerate auto commentary
-      const names = (await client.query(
-        `SELECT sp.full_name AS batter, bp.full_name AS bowler FROM players sp, players bp
-         WHERE sp.id = $1 AND bp.id = $2`,
-        [orig.striker_id, orig.bowler_id],
-      )).rows[0] ?? { batter: 'Unknown', bowler: 'Unknown' };
-      const editedEv: BallEvent = {
-        strikerId: orig.striker_id, nonStrikerId: orig.non_striker_id, bowlerId: orig.bowler_id,
-        runsBatter: dto.runs_batter ?? 0,
-        extraType: (dto.extra_type ?? null) as BallEvent['extraType'],
-        runsExtras: dto.runs_extras ?? 0,
-        secondaryExtraType: (dto.secondary_extra_type ?? null) as BallEvent['secondaryExtraType'],
-        wicket: dto.wicket_type ? {
-          type: dto.wicket_type as import('./rules-engine').WicketType,
-          dismissedPlayerId: dto.dismissed_player_id ?? orig.striker_id,
-          fielderId: dto.fielder_id ?? undefined,
-          wicketBrokenEnd: dto.wicket_broken_end as 'striker_end' | 'non_striker_end' | undefined,
-        } : null,
-      };
-      const newBody = this.commentaryText(
-        orig.over_number, orig.ball_in_over, names.bowler, names.batter,
-        editedEv, totalExtras, isFour, isSix, partialEng, null,
-      );
-      const origTs = (await client.query(
-        `SELECT created_at FROM commentary_entries WHERE ball_id = $1 AND source = 'auto'`, [ballId],
-      )).rows[0]?.created_at;
-      await client.query(`DELETE FROM commentary_entries WHERE ball_id = $1 AND source = 'auto'`, [ballId]);
-      await client.query(
-        `INSERT INTO commentary_entries (match_id, innings_id, ball_id, source, body, is_highlight, created_at)
-         VALUES ($1,$2,$3,'auto',$4,$5,coalesce($6::timestamptz, now()))`,
-        [matchId, orig.innings_id, newBallId, newBody,
-          !!dto.wicket_type || isFour || isSix, origTs ?? null],
-      );
-
-      // 7. Full innings replay to rebuild all state
+      // 5. Full innings replay rebuilds every derived value — cards, over
+      //    summaries, innings totals and the whole auto commentary feed. The
+      //    commentary must be rebuilt wholesale rather than just for this ball:
+      //    each body embeds the running score, so every later ball is stale
+      //    too, and the end-of-over summary hangs off the same ball_id as the
+      //    ball that closed the over.
       const rebuilt = await this.replayInnings(client, match, orig.innings_id);
       return { edited: newBallId, state: rebuilt };
     });
@@ -1194,11 +1137,47 @@ export class ScoringService {
     ).rows;
 
     const ls = match.live_state;
+    // Replaying an innings the match has already moved past (correcting a ball
+    // in innings 1 after innings 2 started, or after the match finished) must
+    // rebuild that innings' stored data WITHOUT touching live_state or the
+    // match status — otherwise a completed match flips back to 'live' and the
+    // live panel starts showing the old innings.
+    const isCurrent = ls?.innings_id === inningsId;
     let engine: LiveInningsState | null = null;
-    ls.batters = {}; ls.bowlers = {}; ls.this_over = []; ls.over_bowler_runs = 0; ls.pending_new_batter = null;
-    ls.current_bowler = null; // overwritten below if balls exist; stale value must not survive a 0-ball replay
+    const batters: Record<string, any> = {};
+    const bowlers: Record<string, any> = {};
+    let thisOver: string[] = [];
+    let currentBowler: string | null = null;
 
     await client.query(`DELETE FROM over_summaries WHERE innings_id = $1`, [inningsId]);
+
+    // Auto commentary is derived data: commentaryText() bakes the running score
+    // into each body, so every ball from an edited one onward goes stale, and
+    // the end-of-over summary shares its ball_id with the ball that closed the
+    // over (so a naive delete-by-ball_id wipes the summary entirely). Rebuild
+    // the whole innings' auto feed from the replay, reusing the original
+    // created_at values so entries keep their place in the feed.
+    const priorAuto = (
+      await client.query(
+        `SELECT ball_id, body, created_at FROM commentary_entries
+         WHERE innings_id = $1 AND source = 'auto' AND ball_id IS NOT NULL`,
+        [inningsId],
+      )
+    ).rows;
+    const ballTs = new Map<string, Date>();
+    const overTs = new Map<string, Date>();
+    for (const row of priorAuto) {
+      const bucket = String(row.body).startsWith('End of over ') ? overTs : ballTs;
+      bucket.set(row.ball_id, row.created_at);
+    }
+    // A corrected ball is a new row, so inherit the timestamp of the ball it
+    // supersedes; the value carries forward across repeated edits.
+    const tsFor = (map: Map<string, Date>, b: any): Date | null =>
+      map.get(b.id) ?? (b.supersedes_ball_id ? map.get(b.supersedes_ball_id) ?? null : null);
+    await client.query(
+      `DELETE FROM commentary_entries WHERE innings_id = $1 AND source = 'auto' AND ball_id IS NOT NULL`,
+      [inningsId],
+    );
 
     if (balls.length > 0) {
       const first = balls[0];
@@ -1225,18 +1204,18 @@ export class ScoringService {
         if (r.ok) engine = r.next;
 
         // Rebuild cards
-        const bat = (ls.batters[b.striker_id] ??= await this.batterCard(client, b.striker_id));
+        const bat = (batters[b.striker_id] ??= await this.batterCard(client, b.striker_id));
         if (b.extra_type !== 'wide') bat.balls += 1;
         bat.runs += b.runs_batter;
         if (b.is_boundary_four) bat.fours += 1;
         if (b.is_boundary_six) bat.sixes += 1;
         if (b.is_wicket && b.dismissed_player_id) {
-          (ls.batters[b.dismissed_player_id] ??= await this.batterCard(client, b.dismissed_player_id)).out = true;
+          (batters[b.dismissed_player_id] ??= await this.batterCard(client, b.dismissed_player_id)).out = true;
         }
         // Byes/leg-byes (including any run off a no-ball) are never charged to the bowler.
         const bowlerRuns = b.runs_batter
           + (['wide', 'no_ball'].includes(b.extra_type ?? '') ? b.runs_extras - b.secondary_extra_runs : 0);
-        const bowl = (ls.bowlers[b.bowler_id] ??= await this.bowlerCard(client, b.bowler_id));
+        const bowl = (bowlers[b.bowler_id] ??= await this.bowlerCard(client, b.bowler_id));
         if (b.is_legal) bowl.legal_balls += 1;
         bowl.runs += bowlerRuns;
         if (b.is_wicket && !['run_out', 'retired_hurt', 'retired_out', 'obstructing_field', 'timed_out'].includes(b.wicket_type)) {
@@ -1252,14 +1231,72 @@ export class ScoringService {
           [inningsId, b.over_number, b.bowler_id, b.runs_batter + b.runs_extras, b.is_wicket ? 1 : 0,
            b.runs_extras, engine.totalRuns, engine.totalWickets],
         );
-        ls.current_bowler = b.bowler_id;
+        currentBowler = b.bowler_id;
+
+        // ---- Ball-by-ball commentary, regenerated against the replayed score ----
+        await client.query(
+          `INSERT INTO commentary_entries (match_id, innings_id, ball_id, source, body, is_highlight, created_at)
+           VALUES ($1,$2,$3,'auto',$4,$5,coalesce($6::timestamptz, now()))`,
+          [match.id, inningsId, b.id,
+           this.commentaryText(b.over_number, b.ball_in_over, bowl.name, bat.name, ev,
+             b.runs_extras, b.is_boundary_four, b.is_boundary_six, engine, b.wagon?.region ?? null),
+           b.is_wicket || b.is_boundary_four || b.is_boundary_six,
+           tsFor(ballTs, b)],
+        );
+
+        // ---- End-of-over summary (mirrors scoreBall's over_complete effect) ----
+        if (r.ok && r.effects.some((e) => e.kind === 'over_complete')) {
+          const overAgg = (
+            await client.query(
+              `SELECT coalesce(sum(runs_batter + CASE WHEN extra_type IN ('wide','no_ball')
+                       THEN runs_extras - secondary_extra_runs ELSE 0 END), 0)::int AS runs,
+                      coalesce(sum(runs_batter + runs_extras), 0)::int AS total_over_runs,
+                      count(*) FILTER (WHERE is_wicket AND wicket_type NOT IN
+                        ('run_out','retired_hurt','retired_out','obstructing_field','timed_out'))::int AS bowler_wickets,
+                      count(*) FILTER (WHERE is_wicket)::int AS wickets_in_over
+               FROM balls WHERE innings_id = $1 AND over_number = $2 AND NOT is_superseded`,
+              [inningsId, b.over_number],
+            )
+          ).rows[0];
+          const isMaidenOver = overAgg.runs === 0;
+          const isWicketMaiden = isMaidenOver && overAgg.bowler_wickets > 0;
+          const overWickets = overAgg.wickets_in_over as number;
+          await client.query(
+            `UPDATE over_summaries SET is_maiden = $3 WHERE innings_id = $1 AND over_number = $2`,
+            [inningsId, b.over_number, isMaidenOver],
+          );
+          if (isMaidenOver) bowl.maidens += 1;
+          thisOver = [];
+
+          const strikerCard = (batters[engine.strikerId] ??= await this.batterCard(client, engine.strikerId));
+          const nonStrikerCard = (batters[engine.nonStrikerId] ??= await this.batterCard(client, engine.nonStrikerId));
+          const bpo = rules.balls_per_over ?? 6;
+          const bowlerFigures = `${Math.floor(bowl.legal_balls / bpo)}.${bowl.legal_balls % bpo}-${bowl.maidens}-${bowl.runs}-${bowl.wickets}`;
+          const ballTsForOver = tsFor(ballTs, b);
+          await client.query(
+            // +1ms keeps the summary above the ball that closed the over, matching scoreBall
+            `INSERT INTO commentary_entries (match_id, innings_id, ball_id, source, body, is_highlight, created_at)
+             VALUES ($1,$2,$3,'auto',$4,$5,
+                     coalesce($6::timestamptz, $7::timestamptz + interval '1 millisecond',
+                              now() + interval '1 millisecond'))`,
+            [match.id, inningsId, b.id,
+             `End of over ${b.over_number + 1} — ${overAgg.total_over_runs} runs: ${engine.totalRuns}/${engine.totalWickets}. ` +
+               (isWicketMaiden ? 'WICKET MAIDEN! '
+                 : isMaidenOver ? 'Maiden over! '
+                 : overWickets > 0 ? `${overWickets} WICKET${overWickets > 1 ? 'S' : ''}! ` : '') +
+               `${strikerCard.name} ${strikerCard.runs}(${strikerCard.balls}), ${nonStrikerCard.name} ${nonStrikerCard.runs}(${nonStrikerCard.balls}). ` +
+               `${bowl.name} ${bowlerFigures}`,
+             isMaidenOver || overWickets > 0,
+             tsFor(overTs, b), ballTsForOver],
+          );
+        }
       }
       // this_over = balls of the current (possibly partial) over.
       // Stored runs_extras includes the automatic wide/no-ball penalty, but
       // ballLabel expects only the runs beyond it (a plain wide must render
       // 'wd', not '2wd'), so strip the penalty back out before labelling.
       const currentOver = Math.floor(engine.legalBalls / rules.balls_per_over);
-      ls.this_over = balls
+      thisOver = balls
         .filter((b) => b.over_number === currentOver)
         .map((b) => {
           const autoPenalty = b.extra_type === 'wide' ? rules.wide?.runs ?? 1
@@ -1292,7 +1329,7 @@ export class ScoringService {
         )
       ).rows;
       for (const row of maidensByBowler) {
-        (ls.bowlers[row.bowler_id] ??= await this.bowlerCard(client, row.bowler_id)).maidens = row.maidens;
+        (bowlers[row.bowler_id] ??= await this.bowlerCard(client, row.bowler_id)).maidens = row.maidens;
       }
     }
 
@@ -1318,6 +1355,40 @@ export class ScoringService {
       [inningsId, agg.runs, agg.wkts, agg.legal, agg.wides, agg.nbs, agg.byes, agg.lbs],
     );
 
+    // This innings' total feeds the chase target of the innings that follows
+    // (target = opponent aggregate − own aggregate + 1), so a correction here
+    // has to move that target too — otherwise the run chase keeps showing the
+    // number derived from the pre-edit score.
+    const allInnings = (
+      await client.query(
+        `SELECT id, seq, batting_team_id, total_runs, target_runs FROM innings
+         WHERE match_id = $1 ORDER BY seq`,
+        [match.id],
+      )
+    ).rows;
+    const replayed = allInnings.find((i) => i.id === inningsId);
+    for (const later of allInnings) {
+      if (!replayed || later.seq <= replayed.seq || later.target_runs === null) continue;
+      const prior = allInnings.filter((i) => i.seq < later.seq);
+      const sumFor = (own: boolean) => prior
+        .filter((i) => (i.batting_team_id === later.batting_team_id) === own)
+        .reduce((s, i) => s + Number(i.total_runs), 0);
+      const target = sumFor(false) - sumFor(true) + 1;
+      if (target !== later.target_runs) {
+        await client.query(`UPDATE innings SET target_runs = $2 WHERE id = $1`, [later.id, target]);
+        if (ls?.innings_id === later.id && ls.engine) ls.engine.target = target;
+      }
+    }
+
+    // Only the live innings owns live_state / match status (see isCurrent).
+    if (!isCurrent) return ls;
+
+    ls.batters = batters;
+    ls.bowlers = bowlers;
+    ls.this_over = thisOver;
+    ls.over_bowler_runs = 0;
+    ls.pending_new_batter = null;
+    ls.current_bowler = currentBowler;
     ls.engine = engine;
     ls.summary = await this.buildSummary(client, ls, rules);
     const newSeq = engine?.seq ?? 0;
