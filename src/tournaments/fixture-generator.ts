@@ -31,9 +31,20 @@ export function generateFixtures(teamIds: string[], cfg: FixtureConfig): DraftFi
   let fixtures: DraftFixture[] = [];
 
   switch (cfg.type) {
-    case 'round_robin':
-      fixtures = schedule(roundRobin(teamIds, cfg.legs), 'league', cfg);
+    case 'round_robin': {
+      let pairs = roundRobin(teamIds, cfg.legs);
+      // Treat maxMatches as the exact number of league matches wanted. One full
+      // round robin of N teams only yields N·(N−1)/2 games (just 1 for a 2-team
+      // tournament), so when the admin asks for more — e.g. a best-of-3 between
+      // two teams — cycle back through the pairing to reach that count. Fewer is
+      // handled by the trim below. Without this, maxMatches could only ever cap,
+      // never extend, so "3 matches" on a 2-team draw produced a single game.
+      if (cfg.maxMatches && cfg.maxMatches > 0 && pairs.length > 0 && cfg.maxMatches > pairs.length) {
+        pairs = Array.from({ length: cfg.maxMatches }, (_, i) => ({ ...pairs[i % pairs.length] }));
+      }
+      fixtures = schedule(pairs, 'league', cfg);
       break;
+    }
     case 'knockout':
       fixtures = schedule(knockout(teamIds), null, cfg);
       break;

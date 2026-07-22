@@ -548,16 +548,28 @@ export class ScoringService {
         )
       ).rows[0];
 
-      // No deliveries left in the current innings. Instead of dead-ending on
-      // "No balls to undo", step back across the innings boundary when a
-      // previous innings can be reopened. This is the recovery path when a ball
-      // correction turns the deliveries that closed an innings into wides: that
-      // innings ends up a few balls short but still marked complete, with play
-      // stranded at the top of the next (empty) innings. Undo here drops the
-      // empty innings and resumes the previous one where it left off.
+      // No deliveries left in the current innings. Never dead-end on "No balls
+      // to undo" — take the sensible step back:
+      //  (a) if an earlier innings can be reopened, step across the boundary
+      //      into it (recovery when a correction turned the balls that closed an
+      //      innings into wides, stranding play at the top of the next, empty
+      //      innings); otherwise
+      //  (b) this is the first innings with every ball already taken back —
+      //      replay it, which with zero balls resets the console to opener
+      //      selection (engine cleared, status → innings_break) so the scorer
+      //      can restart cleanly rather than being stuck.
       if (!last) {
-        const reopened = await this.reopenPreviousInnings(client, match, ls);
-        return { reopened_innings: reopened.seq, state: reopened.state };
+        const innings = (
+          await client.query(`SELECT id, seq, status FROM innings WHERE match_id = $1 ORDER BY seq`, [match.id])
+        ).rows;
+        const current = innings.find((i) => i.id === ls.innings_id);
+        const prev = current ? innings.filter((i) => i.seq < current.seq).pop() : null;
+        if (prev && ['completed', 'declared', 'forfeited'].includes(prev.status)) {
+          const reopened = await this.reopenPreviousInnings(client, match, ls);
+          return { reopened_innings: reopened.seq, state: reopened.state };
+        }
+        const reset = await this.replayInnings(client, match, ls.innings_id);
+        return { reset_openers: true, state: reset };
       }
 
       await client.query(`UPDATE balls SET is_superseded = true WHERE id = $1`, [last.id]);
@@ -573,7 +585,9 @@ export class ScoringService {
     // Corrections tell clients to discard local state and adopt the snapshot
     await this.live.syncAndPublish(
       matchId, 'correction',
-      out.undone ? { undone: out.undone } : { transition: 'innings_reopened' },
+      out.undone ? { undone: out.undone }
+        : out.reset_openers ? { transition: 'openers_reset' }
+        : { transition: 'innings_reopened' },
     );
     return out;
   }
