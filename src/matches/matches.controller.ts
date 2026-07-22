@@ -65,7 +65,7 @@ class OpenersDto {
 
 class WicketDto {
   @IsIn(['bowled', 'caught', 'caught_behind', 'caught_and_bowled', 'lbw', 'run_out', 'stumped', 'hit_wicket',
-         'retired_hurt', 'retired_out', 'obstructing_field', 'timed_out', 'hit_ball_twice', 'handled_ball'])
+         'retired_hurt', 'retired_out', 'obstructing_field', 'timed_out', 'hit_ball_twice', 'handled_ball', 'declared_out'])
   type!: string;
   /** Defaults to the striker */
   @IsOptional() @IsUUID() dismissed_player_id?: string;
@@ -150,6 +150,12 @@ class SubstitutionDto {
   @IsOptional() @IsBoolean() can_bowl?: boolean;
 }
 
+class EditMatchDto {
+  @IsOptional() @IsDateString() scheduled_start?: string;
+  @IsOptional() @IsUUID() format_id?: string;
+  @IsOptional() @IsObject() rule_overrides?: object;
+}
+
 class MatchOfficialDto {
   @IsUUID() official_id!: string;
   @IsIn(['field_umpire_1', 'field_umpire_2', 'tv_umpire', 'reserve_umpire', 'referee', 'scorer'])
@@ -189,7 +195,7 @@ class EditBallDto {
   @IsOptional() @IsBoolean() is_boundary_six?: boolean;
   @IsOptional() @IsIn(['bowled', 'caught', 'caught_behind', 'caught_and_bowled', 'lbw', 'run_out',
     'stumped', 'hit_wicket', 'retired_hurt', 'retired_out', 'obstructing_field', 'timed_out',
-    'hit_ball_twice', 'handled_ball']) wicket_type?: string;
+    'hit_ball_twice', 'handled_ball', 'declared_out']) wicket_type?: string;
   @IsOptional() @IsUUID() dismissed_player_id?: string;
   @IsOptional() @IsUUID() fielder_id?: string;
   @IsOptional() @IsIn(['striker_end', 'non_striker_end']) wicket_broken_end?: string;
@@ -329,6 +335,14 @@ export class MatchesController {
   async substitute(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload, @Body() dto: SubstitutionDto) {
     await this.access.assertCanScore(id, user);
     return this.matches.substitute(id, dto);
+  }
+
+  /** Edit match details (scheduled_start, format, rules) before toss. */
+  @Patch('matches/:id')
+  @UseGuards(JwtAuthGuard)
+  async editMatch(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload, @Body() dto: EditMatchDto) {
+    await this.access.assertMatchOrgMember(id, user);
+    return this.matches.editMatch(id, dto);
   }
 
   // ---- scoring flow ----

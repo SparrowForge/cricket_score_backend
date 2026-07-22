@@ -46,7 +46,7 @@ export interface BallEvent {
 export type WicketType =
   | 'bowled' | 'caught' | 'caught_behind' | 'caught_and_bowled' | 'lbw' | 'run_out'
   | 'stumped' | 'hit_wicket' | 'retired_hurt' | 'retired_out' | 'obstructing_field'
-  | 'timed_out' | 'hit_ball_twice' | 'handled_ball';
+  | 'timed_out' | 'hit_ball_twice' | 'handled_ball' | 'declared_out';
 
 /** Dismissals still legal on a free hit (only "not off the bowling" modes). */
 const FREE_HIT_LEGAL_WICKETS: ReadonlySet<WicketType> = new Set([

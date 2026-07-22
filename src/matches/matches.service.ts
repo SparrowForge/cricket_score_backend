@@ -266,6 +266,49 @@ export class MatchesService {
     return inRow.rows[0];
   }
 
+  /** Edit match details (scheduled_start, format, rules) before toss. */
+  async editMatch(
+    matchId: string,
+    dto: { scheduled_start?: string; format_id?: string; rule_overrides?: unknown },
+  ) {
+    const match = (await this.pool.query('SELECT status FROM matches WHERE id = $1', [matchId])).rows[0];
+    if (!match) throw new NotFoundException('Match not found');
+    if (match.status !== 'scheduled') {
+      throw new BadRequestException(`Cannot edit match after scheduling (status: ${match.status})`);
+    }
+
+    // Prepare the updates
+    const updates: string[] = [];
+    const values: unknown[] = [matchId];
+    let paramIdx = 2;
+
+    if (dto.scheduled_start) {
+      updates.push(`scheduled_start = $${paramIdx}`);
+      values.push(dto.scheduled_start);
+      paramIdx += 1;
+    }
+
+    if (dto.format_id) {
+      updates.push(`format_id = $${paramIdx}`);
+      values.push(dto.format_id);
+      paramIdx += 1;
+    }
+
+    if (dto.rule_overrides) {
+      updates.push(`rules_snapshot = $${paramIdx}`);
+      values.push(JSON.stringify(dto.rule_overrides));
+      paramIdx += 1;
+    }
+
+    if (updates.length === 0) return { status: 'scheduled' };
+
+    await this.pool.query(
+      `UPDATE matches SET ${updates.join(', ')} WHERE id = $1`,
+      values,
+    );
+    return { status: 'scheduled' };
+  }
+
   /** Stats tab payload: wagon wheel vectors, partnerships, run-rate series. */
   async matchStats(matchId: string) {
     const wagon = (
@@ -378,12 +421,40 @@ export class MatchesService {
     if (![match.team_a_id, match.team_b_id].includes(teamId)) {
       throw new BadRequestException('Team is not part of this match');
     }
-    if (!['scheduled', 'toss'].includes(match.status)) {
-      throw new BadRequestException('Squad can only be set before the match starts');
+    if (['completed', 'abandoned', 'no_result', 'cancelled', 'forfeited'].includes(match.status)) {
+      throw new BadRequestException('Squad cannot be changed after the match is finished');
     }
     const xi = players.filter((p) => p.is_playing_xi !== false && !p.is_twelfth);
     const keepers = xi.filter((p) => p.is_wicket_keeper);
     if (keepers.length > 1) throw new BadRequestException('Only one wicket-keeper in the XI');
+
+    // Mid-match squad edits are allowed (substitutions, fixing a mistake), but
+    // a player from this team who has already batted, bowled, or been dismissed
+    // is woven into the live state and scorecard — dropping them would orphan
+    // that data, so they must stay in the XI.
+    if (!['scheduled', 'toss'].includes(match.status)) {
+      const participated = (
+        await this.pool.query(
+          `SELECT DISTINCT x.pid
+             FROM (
+               SELECT striker_id AS pid FROM balls b JOIN innings i ON i.id = b.innings_id WHERE i.match_id = $1
+               UNION SELECT non_striker_id FROM balls b JOIN innings i ON i.id = b.innings_id WHERE i.match_id = $1
+               UNION SELECT bowler_id FROM balls b JOIN innings i ON i.id = b.innings_id WHERE i.match_id = $1
+               UNION SELECT dismissed_player_id FROM balls b JOIN innings i ON i.id = b.innings_id
+                 WHERE i.match_id = $1 AND dismissed_player_id IS NOT NULL
+             ) x
+             JOIN match_players mp ON mp.player_id = x.pid AND mp.match_id = $1 AND mp.team_id = $2`,
+          [matchId, teamId],
+        )
+      ).rows.map((r) => r.pid);
+      const newXi = new Set(xi.map((p) => p.player_id));
+      const dropped = participated.filter((id) => !newXi.has(id));
+      if (dropped.length > 0) {
+        throw new BadRequestException(
+          'Cannot remove a player who has already batted or bowled in this match',
+        );
+      }
+    }
 
     const client = await this.pool.connect();
     try {

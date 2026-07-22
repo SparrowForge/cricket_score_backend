@@ -39,16 +39,20 @@ export class ScoringService {
       if (match.rules_snapshot) {
         rules = match.rules_snapshot;
       } else if (match.tournament_id) {
-        const t = (
+        const result = (
           await client.query(
             `SELECT f.rules, t.rule_overrides FROM tournaments t
              JOIN match_formats f ON f.id = t.format_id WHERE t.id = $1`,
             [match.tournament_id],
           )
-        ).rows[0];
+        ).rows;
+        if (!result?.[0]) throw new BadRequestException(`Tournament ${match.tournament_id} or its format not found`);
+        const t = result[0];
         rules = deepMerge(t.rules, t.rule_overrides);
       } else {
-        rules = (await client.query(`SELECT rules FROM match_formats WHERE slug = 't20' AND is_builtin`)).rows[0].rules;
+        const result = (await client.query(`SELECT rules FROM match_formats WHERE slug = 't20' AND is_builtin`)).rows;
+        if (!result?.[0]) throw new BadRequestException('Default T20 format not found');
+        rules = result[0].rules;
       }
 
       const battingFirst =
@@ -128,10 +132,13 @@ export class ScoringService {
     },
   ) {
     const out = await this.withMatch(matchId, async (client, match) => {
-      // Allow editing settings before toss or between innings (not during live play)
-      if (!['scheduled', 'toss', 'innings_break'].includes(match.status)) {
+      // Settings can be edited at any point up to (but not after) the match is
+      // decided. They only change the rules_snapshot the engine reads for each
+      // subsequent ball, so mid-innings edits take effect going forward — a
+      // finished match's result must stay frozen.
+      if (['completed', 'abandoned', 'no_result', 'cancelled', 'forfeited'].includes(match.status)) {
         throw new BadRequestException(
-          `Cannot edit settings during active play (status: ${match.status})`,
+          `Cannot edit settings after the match is finished (status: ${match.status})`,
         );
       }
 
@@ -156,6 +163,17 @@ export class ScoringService {
           )
         ).rows[0];
         rules = fmt?.rules || {};
+      }
+
+      // Validate overs_per_innings: cannot reduce below completed overs
+      if (dto.overs_per_innings !== undefined && dto.overs_per_innings > 0) {
+        const ballsPerOver = rules.balls_per_over ?? 6;
+        const completedOvers = Math.floor((match.live_state?.engine?.legalBalls ?? 0) / ballsPerOver);
+        if (dto.overs_per_innings < completedOvers) {
+          throw new BadRequestException(
+            `Cannot set overs_per_innings to ${dto.overs_per_innings} (already completed ${completedOvers} overs)`,
+          );
+        }
       }
 
       // Update the settable fields in rules
@@ -1546,8 +1564,10 @@ export class ScoringService {
   }
 
   private async summaryShell(client: PoolClient, battingTeamId: string, target: number | null) {
-    const t = (await client.query(`SELECT short_name FROM teams WHERE id = $1`, [battingTeamId])).rows[0];
-    return { batting_team: t?.short_name, score: '0/0', overs: '0.0', target, current_rr: 0, required_rr: null };
+    const result = (await client.query(`SELECT short_name FROM teams WHERE id = $1`, [battingTeamId])).rows;
+    const t = result?.[0];
+    if (!t) throw new BadRequestException(`Team ${battingTeamId} not found`);
+    return { batting_team: t.short_name, score: '0/0', overs: '0.0', target, current_rr: 0, required_rr: null };
   }
 
   private async buildSummary(client: PoolClient, ls: any, rules: FormatRules) {
