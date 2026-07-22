@@ -1,6 +1,6 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import Redis from 'ioredis';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { PG_POOL } from '../database/database.module';
 import { REDIS } from '../redis/redis.module';
 import { LiveStateService } from './live-state.service';
@@ -338,18 +338,13 @@ export class MatchesService {
 
   /** Delete a match (only in scheduled state). */
   async deleteMatch(matchId: string) {
-    const match = (await this.pool.query('SELECT status FROM matches WHERE id = $1', [matchId])).rows[0];
+    const match = (await this.pool.query('SELECT id FROM matches WHERE id = $1', [matchId])).rows[0];
     if (!match) throw new NotFoundException('Match not found');
-    if (match.status !== 'scheduled') {
-      throw new BadRequestException(`Cannot delete match after scheduling (status: ${match.status})`);
-    }
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      // Delete related records first
-      await client.query('DELETE FROM squad_selections WHERE match_id = $1', [matchId]);
-      await client.query('DELETE FROM matches WHERE id = $1', [matchId]);
+      await this.purgeMatch(client, matchId);
       await client.query('COMMIT');
       return { deleted: true, match_id: matchId };
     } catch (err) {
@@ -358,6 +353,41 @@ export class MatchesService {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Delete a match and every row that hangs off it. Most FKs cascade from
+   * matches, but two do NOT and would raise a foreign-key violation:
+   *   - commentary_entries.ball_id → balls(id)  (blocks the innings→balls cascade)
+   *   - matches.parent_match_id → matches(id)    (super-over child pins the parent)
+   * So we delete the ball-scoped and innings-scoped children explicitly, in
+   * dependency order, and recurse into any super-over child first.
+   */
+  private async purgeMatch(client: PoolClient, matchId: string) {
+    // Super-over children point back at this match with no cascade — clear them
+    // out first (each is a full match with its own innings/balls/commentary).
+    const children = (
+      await client.query('SELECT id FROM matches WHERE parent_match_id = $1', [matchId])
+    ).rows;
+    for (const child of children) await this.purgeMatch(client, child.id);
+
+    const inn = { text: 'SELECT id FROM innings WHERE match_id = $1', values: [matchId] };
+
+    // 1. Commentary — references balls via ball_id (no cascade), must go first.
+    await client.query('DELETE FROM commentary_entries WHERE match_id = $1', [matchId]);
+    // 2. Ball-stream + per-innings rollups.
+    await client.query(`DELETE FROM balls WHERE innings_id IN (${inn.text})`, inn.values);
+    await client.query(`DELETE FROM over_summaries WHERE innings_id IN (${inn.text})`, inn.values);
+    await client.query(`DELETE FROM partnerships WHERE innings_id IN (${inn.text})`, inn.values);
+    // 3. Squad (playing XI + bench) / officials.
+    await client.query('DELETE FROM match_players WHERE match_id = $1', [matchId]);
+    await client.query('DELETE FROM match_officials WHERE match_id = $1', [matchId]);
+    await client.query('DELETE FROM match_interruptions WHERE match_id = $1', [matchId]);
+    await client.query('DELETE FROM match_mvp_points WHERE match_id = $1', [matchId]);
+    await client.query('DELETE FROM player_match_stats WHERE match_id = $1', [matchId]);
+    // 4. Innings, then the match itself.
+    await client.query('DELETE FROM innings WHERE match_id = $1', [matchId]);
+    await client.query('DELETE FROM matches WHERE id = $1', [matchId]);
   }
 
   /** Stats tab payload: wagon wheel vectors, partnerships, run-rate series. */
