@@ -584,10 +584,10 @@ export class ScoringService {
       await client.query(`SELECT * FROM innings WHERE match_id = $1 ORDER BY seq`, [match.id])
     ).rows;
     const current = innings.find((i) => i.id === ls.innings_id);
-    if (!current) throw new BadRequestException('No balls to undo');
+    if (!current) throw new BadRequestException('No earlier innings to step back into');
     const prev = innings.filter((i) => i.seq < current.seq).pop();
     if (!prev || !['completed', 'declared', 'forfeited'].includes(prev.status)) {
-      throw new BadRequestException('No balls to undo');
+      throw new BadRequestException('No earlier innings to step back into');
     }
 
     // Drop the empty current innings. Its commentary must go first: commentary
@@ -722,17 +722,27 @@ export class ScoringService {
       } else {
         const current = innings.find((i) => i.id === ls?.innings_id);
         if (!current) throw new BadRequestException('No innings context to reopen');
-        if (current.status === 'in_progress' || (current.status === 'not_started' && current.seq === 1)) {
-          throw new BadRequestException('Innings is already open — use ball undo instead');
-        }
-        if (current.status === 'not_started') {
-          const balls = await client.query(`SELECT 1 FROM balls WHERE innings_id = $1 LIMIT 1`, [current.id]);
-          if (balls.rowCount! > 0) throw new BadRequestException('Next innings already has deliveries');
-          await client.query(`DELETE FROM innings WHERE id = $1`, [current.id]);
-          toReopen = innings[innings.findIndex((i) => i.id === current.id) - 1];
-        } else {
-          // e.g. innings just completed and match paused before next was created
+
+        if (['completed', 'declared', 'forfeited'].includes(current.status)) {
+          // Innings just completed and the match paused before the next was created.
           toReopen = current;
+        } else {
+          // Current innings is still open (in_progress or not_started). If it
+          // holds any live delivery, the user must take balls back one at a
+          // time. If it's empty — freshly opened, or every delivery was
+          // superseded by corrections leaving play stranded at its top — step
+          // back into the previous innings (also the normal undo-a-declare case
+          // where the next innings hasn't started). Delegates to the shared
+          // helper, which drops this empty innings and reopens the prior one.
+          const active = await client.query(
+            `SELECT 1 FROM balls WHERE innings_id = $1 AND NOT is_superseded LIMIT 1`,
+            [current.id],
+          );
+          if (active.rowCount! > 0 || current.seq === 1) {
+            throw new BadRequestException('Innings is already open — use ball undo instead');
+          }
+          const reopened = await this.reopenPreviousInnings(client, match, ls);
+          return { reopened_innings: reopened.seq, state: reopened.state };
         }
       }
       if (!toReopen || !['completed', 'declared', 'forfeited'].includes(toReopen.status)) {
