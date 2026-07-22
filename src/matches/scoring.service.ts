@@ -547,15 +547,72 @@ export class ScoringService {
           [ls.innings_id],
         )
       ).rows[0];
-      if (!last) throw new BadRequestException('No balls to undo');
+
+      // No deliveries left in the current innings. Instead of dead-ending on
+      // "No balls to undo", step back across the innings boundary when a
+      // previous innings can be reopened. This is the recovery path when a ball
+      // correction turns the deliveries that closed an innings into wides: that
+      // innings ends up a few balls short but still marked complete, with play
+      // stranded at the top of the next (empty) innings. Undo here drops the
+      // empty innings and resumes the previous one where it left off.
+      if (!last) {
+        const reopened = await this.reopenPreviousInnings(client, match, ls);
+        return { reopened_innings: reopened.seq, state: reopened.state };
+      }
+
       await client.query(`UPDATE balls SET is_superseded = true WHERE id = $1`, [last.id]);
       await client.query(`DELETE FROM commentary_entries WHERE ball_id = $1 AND source = 'auto'`, [last.id]);
       const rebuilt = await this.replayInnings(client, match, ls.innings_id);
       return { undone: last.id, state: rebuilt };
     });
     // Corrections tell clients to discard local state and adopt the snapshot
-    await this.live.syncAndPublish(matchId, 'correction', { undone: out.undone });
+    await this.live.syncAndPublish(
+      matchId, 'correction',
+      out.undone ? { undone: out.undone } : { transition: 'innings_reopened' },
+    );
     return out;
+  }
+
+  /**
+   * Reopen the innings immediately before the current one and make it live
+   * again, discarding the now-empty current innings. Shared recovery step for
+   * undo when the current innings has no ball left to take back. Throws if
+   * there is no previous innings in a reopenable state.
+   */
+  private async reopenPreviousInnings(client: PoolClient, match: any, ls: any) {
+    const innings = (
+      await client.query(`SELECT * FROM innings WHERE match_id = $1 ORDER BY seq`, [match.id])
+    ).rows;
+    const current = innings.find((i) => i.id === ls.innings_id);
+    if (!current) throw new BadRequestException('No balls to undo');
+    const prev = innings.filter((i) => i.seq < current.seq).pop();
+    if (!prev || !['completed', 'declared', 'forfeited'].includes(prev.status)) {
+      throw new BadRequestException('No balls to undo');
+    }
+
+    // Drop the empty current innings. Its commentary must go first: commentary
+    // rows reference balls via ball_id with no cascade, so the innings→balls
+    // cascade would otherwise be blocked.
+    await client.query(`DELETE FROM commentary_entries WHERE innings_id = $1`, [current.id]);
+    await client.query(`DELETE FROM innings WHERE id = $1`, [current.id]);
+
+    // Reopen the previous innings. Clear its stale "End of innings" auto card
+    // (ball_id IS NULL, so replayInnings' ball-keyed rebuild leaves it behind),
+    // then replay to rebuild live_state and flip the match status back to live.
+    await client.query(
+      `UPDATE innings SET status = 'in_progress', ended_at = NULL WHERE id = $1`,
+      [prev.id],
+    );
+    await client.query(
+      `DELETE FROM commentary_entries WHERE innings_id = $1 AND source = 'auto' AND ball_id IS NULL`,
+      [prev.id],
+    );
+    ls.innings_id = prev.id;
+    ls.innings_seq = prev.seq;
+    ls.follow_on_available = null;
+    ls.follow_on_decision = null;
+    const state = await this.replayInnings(client, match, prev.id);
+    return { seq: prev.seq, state };
   }
 
   /** Correct any non-superseded ball: supersede the original, insert a corrected copy at the same seq, replay the innings. */
