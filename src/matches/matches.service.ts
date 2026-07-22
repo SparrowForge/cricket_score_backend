@@ -271,7 +271,7 @@ export class MatchesService {
     matchId: string,
     dto: { scheduled_start?: string; format_id?: string; rule_overrides?: unknown },
   ) {
-    const match = (await this.pool.query('SELECT status FROM matches WHERE id = $1', [matchId])).rows[0];
+    const match = (await this.pool.query('SELECT status, tournament_id, rules_snapshot FROM matches WHERE id = $1', [matchId])).rows[0];
     if (!match) throw new NotFoundException('Match not found');
     if (match.status !== 'scheduled') {
       throw new BadRequestException(`Cannot edit match after scheduling (status: ${match.status})`);
@@ -294,9 +294,36 @@ export class MatchesService {
       paramIdx += 1;
     }
 
+    // Handle rule_overrides: merge with existing rules or format defaults
     if (dto.rule_overrides) {
+      let baseRules: unknown;
+
+      if (match.rules_snapshot) {
+        // Merge with existing rules_snapshot
+        baseRules = deepMerge(match.rules_snapshot, dto.rule_overrides);
+      } else if (match.tournament_id) {
+        // Get format rules from tournament and merge overrides
+        const t = (
+          await this.pool.query(
+            `SELECT f.rules, t.rule_overrides FROM tournaments t
+             JOIN match_formats f ON f.id = t.format_id WHERE t.id = $1`,
+            [match.tournament_id],
+          )
+        ).rows[0];
+        const tournamentRules = deepMerge(t.rules, t.rule_overrides);
+        baseRules = deepMerge(tournamentRules, dto.rule_overrides);
+      } else {
+        // Default to T20 + overrides
+        const fmt = (
+          await this.pool.query(
+            `SELECT rules FROM match_formats WHERE name = 'T20 Internationals' LIMIT 1`,
+          )
+        ).rows[0];
+        baseRules = deepMerge(fmt?.rules || {}, dto.rule_overrides);
+      }
+
       updates.push(`rules_snapshot = $${paramIdx}`);
-      values.push(dto.rule_overrides);
+      values.push(baseRules);
       paramIdx += 1;
     }
 
@@ -307,6 +334,30 @@ export class MatchesService {
       values,
     );
     return { status: 'scheduled' };
+  }
+
+  /** Delete a match (only in scheduled state). */
+  async deleteMatch(matchId: string) {
+    const match = (await this.pool.query('SELECT status FROM matches WHERE id = $1', [matchId])).rows[0];
+    if (!match) throw new NotFoundException('Match not found');
+    if (match.status !== 'scheduled') {
+      throw new BadRequestException(`Cannot delete match after scheduling (status: ${match.status})`);
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Delete related records first
+      await client.query('DELETE FROM squad_selections WHERE match_id = $1', [matchId]);
+      await client.query('DELETE FROM matches WHERE id = $1', [matchId]);
+      await client.query('COMMIT');
+      return { deleted: true, match_id: matchId };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   /** Stats tab payload: wagon wheel vectors, partnerships, run-rate series. */

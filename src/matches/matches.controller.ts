@@ -345,6 +345,14 @@ export class MatchesController {
     return this.matches.editMatch(id, dto);
   }
 
+  /** Delete a match (only in scheduled state). */
+  @Delete('matches/:id')
+  @UseGuards(JwtAuthGuard)
+  async deleteMatch(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    await this.access.assertMatchOrgMember(id, user);
+    return this.matches.deleteMatch(id);
+  }
+
   // ---- scoring flow ----
   /** Record the toss. Freezes the rules snapshot and creates innings 1. */
   @Post('matches/:id/toss')

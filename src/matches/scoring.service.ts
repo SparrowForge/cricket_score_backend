@@ -1405,11 +1405,10 @@ export class ScoringService {
     // was scored) — there is no striker/bowler to resume with, so drop back to
     // innings_break instead of a broken 'live' state; openers() will accept a
     // fresh selection from there.
-    // A finished match keeps its status: correcting a ball in the final innings
-    // must not resurrect it to 'live' (its result stands until re-finalized).
-    const finished = ['completed', 'abandoned', 'no_result', 'cancelled', 'forfeited']
-      .includes(match.status);
-    const newStatus = finished ? match.status : engine ? 'live' : 'innings_break';
+    // When replaying the current innings, allow status transitions even if the
+    // match was previously completed: a ball edit that changes the innings outcome
+    // should revert the match from 'completed' to 'live' or 'innings_break'.
+    const newStatus = engine ? 'live' : 'innings_break';
     await client.query(
       `UPDATE matches SET live_state = $2, live_state_seq = $3, status = $4 WHERE id = $1`,
       [match.id, JSON.stringify(ls), newSeq, newStatus],
