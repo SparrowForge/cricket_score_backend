@@ -277,7 +277,10 @@ export class MatchesService {
       throw new BadRequestException(`Cannot edit match after scheduling (status: ${match.status})`);
     }
 
-    // Prepare the updates
+    // Prepare the updates. NOTE: `matches` has no `format_id` column — a match's
+    // format lives entirely in its rules_snapshot. So picking a new format_id
+    // means loading that format's rules and using them as the new base, rather
+    // than storing a column.
     const updates: string[] = [];
     const values: unknown[] = [matchId];
     let paramIdx = 2;
@@ -288,21 +291,21 @@ export class MatchesService {
       paramIdx += 1;
     }
 
-    if (dto.format_id) {
-      updates.push(`format_id = $${paramIdx}`);
-      values.push(dto.format_id);
-      paramIdx += 1;
-    }
+    // Recompute rules_snapshot whenever the format or any override changes.
+    if (dto.format_id || dto.rule_overrides) {
+      // Base rules, in priority order: an explicitly chosen format, else the
+      // match's current snapshot, else the tournament's format, else plain T20.
+      let baseRules: unknown = null;
 
-    // Handle rule_overrides: merge with existing rules or format defaults
-    if (dto.rule_overrides) {
-      let baseRules: unknown;
-
-      if (match.rules_snapshot) {
-        // Merge with existing rules_snapshot
-        baseRules = deepMerge(match.rules_snapshot, dto.rule_overrides);
+      if (dto.format_id) {
+        const f = (
+          await this.pool.query('SELECT rules FROM match_formats WHERE id = $1', [dto.format_id])
+        ).rows[0];
+        if (!f) throw new BadRequestException('Unknown format_id');
+        baseRules = f.rules;
+      } else if (match.rules_snapshot) {
+        baseRules = match.rules_snapshot;
       } else if (match.tournament_id) {
-        // Get format rules from tournament and merge overrides
         const t = (
           await this.pool.query(
             `SELECT f.rules, t.rule_overrides FROM tournaments t
@@ -310,20 +313,17 @@ export class MatchesService {
             [match.tournament_id],
           )
         ).rows[0];
-        const tournamentRules = deepMerge(t.rules, t.rule_overrides);
-        baseRules = deepMerge(tournamentRules, dto.rule_overrides);
+        baseRules = t ? deepMerge(t.rules, t.rule_overrides) : {};
       } else {
-        // Default to T20 + overrides
         const fmt = (
-          await this.pool.query(
-            `SELECT rules FROM match_formats WHERE name = 'T20 Internationals' LIMIT 1`,
-          )
+          await this.pool.query(`SELECT rules FROM match_formats WHERE name = 'T20' LIMIT 1`)
         ).rows[0];
-        baseRules = deepMerge(fmt?.rules || {}, dto.rule_overrides);
+        baseRules = fmt?.rules ?? {};
       }
 
+      const merged = dto.rule_overrides ? deepMerge(baseRules, dto.rule_overrides) : baseRules;
       updates.push(`rules_snapshot = $${paramIdx}`);
-      values.push(baseRules);
+      values.push(JSON.stringify(merged));
       paramIdx += 1;
     }
 
