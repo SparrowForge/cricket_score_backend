@@ -561,7 +561,12 @@ export class ScoringService {
       }
 
       await client.query(`UPDATE balls SET is_superseded = true WHERE id = $1`, [last.id]);
-      await client.query(`DELETE FROM commentary_entries WHERE ball_id = $1 AND source = 'auto'`, [last.id]);
+      // Remove every commentary row tied to the undone ball — not just the auto
+      // narration but also manual fielding events (dropped catch / run out
+      // missed / misfield) that addCommentary pinned to it. replayInnings only
+      // rebuilds auto entries, so without this the fielding note would linger in
+      // the feed after its ball was taken back.
+      await client.query(`DELETE FROM commentary_entries WHERE ball_id = $1`, [last.id]);
       const rebuilt = await this.replayInnings(client, match, ls.innings_id);
       return { undone: last.id, state: rebuilt };
     });

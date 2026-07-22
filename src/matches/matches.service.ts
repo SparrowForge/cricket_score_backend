@@ -806,6 +806,25 @@ export class MatchesService {
   }
 
   async addCommentary(matchId: string, userId: string, dto: { body: string; is_highlight?: boolean; ball_id?: string; fielder_player_id?: string }) {
+    // Fielding events (dropped catch / run out missed / misfield) describe the
+    // delivery just bowled, so tag them with the last ball of the live innings
+    // when the client didn't pin one. This makes them "belong" to that ball: an
+    // undo of the ball removes the fielding note too (see ScoringService.undoLast),
+    // instead of leaving it orphaned in the feed. Detected by the same body
+    // prefixes the stats aggregates use. Free-text colour commentary is left
+    // ball-less so it survives an undo.
+    const FIELDING_PREFIXES = ['DROPPED CATCH!', 'RUN OUT MISSED!', 'MISFIELD!'];
+    let ballId = dto.ball_id ?? null;
+    if (!ballId && FIELDING_PREFIXES.some((p) => dto.body.startsWith(p))) {
+      ballId = (
+        await this.pool.query(
+          `SELECT b.id FROM balls b JOIN innings i ON i.id = b.innings_id
+           WHERE i.match_id = $1 AND i.status = 'in_progress' AND NOT b.is_superseded
+           ORDER BY b.seq DESC LIMIT 1`,
+          [matchId],
+        )
+      ).rows[0]?.id ?? null;
+    }
     const res = await this.pool.query(
       `INSERT INTO commentary_entries (match_id, author_id, source, body, is_highlight, ball_id,
                                        innings_id, fielder_player_id)
@@ -816,7 +835,7 @@ export class MatchesService {
                ),
                $6)
        RETURNING *`,
-      [matchId, userId, dto.body, dto.is_highlight, dto.ball_id ?? null, dto.fielder_player_id ?? null],
+      [matchId, userId, dto.body, dto.is_highlight, ballId, dto.fielder_player_id ?? null],
     );
     return res.rows[0];
   }
