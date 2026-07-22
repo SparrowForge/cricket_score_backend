@@ -63,6 +63,8 @@ class GenerateFixturesDto {
   @IsArray() @ArrayMinSize(1) matchDays!: number[];
   @IsInt() @Min(1) matchesPerDay!: number;
   @IsArray() @ArrayMinSize(1) venueIds!: string[];
+  /** Maximum number of matches to generate (optional limit) */
+  @IsOptional() @IsInt() @Min(1) maxMatches?: number;
 }
 
 class DraftFixtureDto {

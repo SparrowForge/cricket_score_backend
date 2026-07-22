@@ -296,7 +296,7 @@ export class MatchesService {
 
     if (dto.rule_overrides) {
       updates.push(`rules_snapshot = $${paramIdx}`);
-      values.push(JSON.stringify(dto.rule_overrides));
+      values.push(dto.rule_overrides);
       paramIdx += 1;
     }
 

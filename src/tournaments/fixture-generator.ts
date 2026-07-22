@@ -13,6 +13,7 @@ export interface FixtureConfig {
   matchDays: number[];               // ISO weekday numbers, e.g. [6,7]
   matchesPerDay: number;
   venueIds: string[];
+  maxMatches?: number;               // optional limit on number of matches to generate
 }
 
 export interface DraftFixture {
@@ -27,9 +28,15 @@ export interface DraftFixture {
 }
 
 export function generateFixtures(teamIds: string[], cfg: FixtureConfig): DraftFixture[] {
+  let fixtures: DraftFixture[] = [];
+
   switch (cfg.type) {
-    case 'round_robin': return schedule(roundRobin(teamIds, cfg.legs), 'league', cfg);
-    case 'knockout':    return schedule(knockout(teamIds), null, cfg);
+    case 'round_robin':
+      fixtures = schedule(roundRobin(teamIds, cfg.legs), 'league', cfg);
+      break;
+    case 'knockout':
+      fixtures = schedule(knockout(teamIds), null, cfg);
+      break;
     case 'hybrid': {
       const groupGames = (cfg.groups ?? []).flatMap((g) =>
         roundRobin(g.teamIds, cfg.legs).map((p) => ({ ...p, groupId: g.id })),
@@ -37,9 +44,17 @@ export function generateFixtures(teamIds: string[], cfg: FixtureConfig): DraftFi
       const draft = schedule(groupGames, 'group', cfg);
       // Knockout slots are TBD until the points table settles.
       const koSlots = knockout(Array.from({ length: cfg.knockoutFrom ?? 4 }, () => null as string | null));
-      return draft.concat(schedule(koSlots, null, cfg, draft.length));
+      fixtures = draft.concat(schedule(koSlots, null, cfg, draft.length));
+      break;
     }
   }
+
+  // Apply maxMatches limit if specified
+  if (cfg.maxMatches && fixtures.length > cfg.maxMatches) {
+    fixtures = fixtures.slice(0, cfg.maxMatches);
+  }
+
+  return fixtures;
 }
 
 /** Circle method: fix team[0], rotate the rest. Handles odd counts via a bye. */
