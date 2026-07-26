@@ -10,6 +10,12 @@ import { applyBall, BallEvent, FormatRules, LiveInningsState, SideEffect } from 
 import { StatsService } from './stats.service';
 
 /**
+ * How many recently-applied client_event_ids the live state carries. Only has
+ * to outlast a scorer's in-flight outbox batch, so a couple of overs is ample.
+ */
+const APPLIED_EVENT_ID_HISTORY = 40;
+
+/**
  * Scoring engine over Postgres.
  * Concurrency: the match row is SELECT … FOR UPDATE for every mutation, and
  * clients pass expected_seq (optimistic check) + client_event_id (idempotency),
@@ -473,6 +479,17 @@ export class ScoringService {
       }
 
       ls.summary = await this.buildSummary(client, ls, rules);
+
+      // Rolling record of the client_event_ids this state already includes.
+      // A scorer's outbox holds a ball until its HTTP batch response returns,
+      // but the websocket broadcast of the applied state races ahead of that
+      // response — without this, the client would fold a ball onto a state
+      // that already contains it and paint the delivery twice. Publishing the
+      // ids lets the client drop exactly the balls the server has absorbed.
+      ls.applied_event_ids = [
+        ...(ls.applied_event_ids ?? []),
+        dto.client_event_id,
+      ].slice(-APPLIED_EVENT_ID_HISTORY);
 
       await client.query(
         `UPDATE matches SET live_state = $2, live_state_seq = $3 WHERE id = $1`,

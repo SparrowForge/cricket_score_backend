@@ -139,20 +139,29 @@ export function applyBall(state: LiveInningsState, ev: BallEvent, rules: FormatR
     effects.push({ kind: 'new_batter_required', dismissedId: ev.wicket.dismissedPlayerId });
   }
 
-  // Strike rotation: use deterministic matrix for run-outs; normal rotation otherwise.
-  // For run-outs, the next striker depends on (dismissed_batter, wicket_broken_end);
-  // completed runs don't determine rotation — they determine IF crossing occurred.
+  // Strike rotation: use a deterministic matrix for run-outs; normal rotation otherwise.
+  //
+  // Run-out placement follows one rule: THE INCOMING BATTER ARRIVES AT THE END
+  // WHERE THE WICKET FELL, so the survivor necessarily stands at the other end.
+  // Completed runs never enter into it — where the two batters physically ended
+  // up is already encoded by (dismissedPlayerId, wicketBrokenEnd).
+  //
+  // The replacement isn't known yet (the scorer picks them after the ball), so
+  // the dismissed id is parked in the fallen end's slot as a placeholder;
+  // newBatter() swaps that exact slot for the replacement, which drops them on
+  // the correct end without needing to re-derive any of this.
   if (ev.wicket?.type === 'run_out' && ev.wicket.wicketBrokenEnd) {
-    const dismissedIsStriker = ev.wicket.dismissedPlayerId === state.strikerId;
+    const dismissedId = ev.wicket.dismissedPlayerId;
+    const survivorId = dismissedId === state.strikerId ? state.nonStrikerId : state.strikerId;
     if (ev.wicket.wicketBrokenEnd === 'striker_end') {
-      // Wicket broken at striker end: if dismissed is striker → new batter faces;
-      // if dismissed is non-striker → new batter faces (they were crossing).
-      next.strikerId = ev.bowlerId === state.strikerId ? state.nonStrikerId : state.strikerId;
-      // (This line is a placeholder; the actual new batter is injected post-replay)
+      // Wicket fell at the striker's end → replacement comes in there and faces.
+      next.strikerId = dismissedId;
+      next.nonStrikerId = survivorId;
     } else {
-      // Wicket broken at non-striker end: if dismissed is striker → non-striker faces;
-      // if dismissed is non-striker → striker faces.
-      next.strikerId = dismissedIsStriker ? state.nonStrikerId : state.strikerId;
+      // Wicket fell at the non-striker's end → replacement comes in there,
+      // survivor is left at the striker's end and takes strike.
+      next.strikerId = survivorId;
+      next.nonStrikerId = dismissedId;
     }
   } else {
     // Non-run-out: normal rotation on odd runs.
