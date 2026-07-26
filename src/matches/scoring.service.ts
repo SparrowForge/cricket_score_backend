@@ -61,6 +61,8 @@ export class ScoringService {
         rules = result[0].rules;
       }
 
+      rules = await this.reconcileSquadSize(client, matchId, rules);
+
       const battingFirst =
         dto.decision === 'bat'
           ? dto.winner_team_id
@@ -1663,6 +1665,49 @@ export class ScoringService {
     if (six) return '6';
     if (four) return '4';
     return String(ev.runsBatter);
+  }
+
+  /**
+   * Align the frozen rules with the XI that actually walks out.
+   *
+   * `wickets_to_fall` decides both when an innings is all out and — via
+   * `completeMatch` — the winning margin. Taking it from the format alone
+   * breaks whenever the registered squads disagree with it: a 6-a-side game
+   * played under a 3-a-side preset reported "won by 1 wicket" when the chasing
+   * side finished with 4 in hand, because the margin is (wickets_to_fall −
+   * wickets lost) and wickets_to_fall was 2 rather than 5. The squads are the
+   * ground truth about how many wickets CAN fall, and by toss time they are
+   * known, so this is the right moment to reconcile.
+   *
+   * Two deliberate guards:
+   *  - Only when the format keeps the conventional `wickets_to_fall =
+   *    players_per_side − 1`. Presets that decouple them on purpose — a super
+   *    over caps wickets at 2 with a full XI — must survive untouched.
+   *  - Only when both sides registered the SAME number. Unequal XIs have no
+   *    single right answer at match level (one value would either strand the
+   *    larger side or end the smaller one early), so the format is left alone
+   *    rather than guessed at.
+   */
+  private async reconcileSquadSize(
+    client: PoolClient,
+    matchId: string,
+    rules: FormatRules,
+  ): Promise<FormatRules> {
+    if (rules.wickets_to_fall !== rules.players_per_side - 1) return rules;
+
+    const counts = (
+      await client.query(
+        `SELECT team_id, count(*)::int AS n FROM match_players
+          WHERE match_id = $1 AND is_playing_xi GROUP BY team_id`,
+        [matchId],
+      )
+    ).rows;
+
+    if (counts.length !== 2) return rules;
+    const [a, b] = counts.map((r) => r.n);
+    if (a !== b || a < 2 || a === rules.players_per_side) return rules;
+
+    return { ...rules, players_per_side: a, wickets_to_fall: a - 1 };
   }
 
   private async summaryShell(client: PoolClient, battingTeamId: string, target: number | null) {
