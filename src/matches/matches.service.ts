@@ -859,8 +859,16 @@ export class MatchesService {
   async mvp(matchId: string) {
     return (
       await this.pool.query(
-        `SELECT mmp.*, p.full_name, tm.short_name AS team
+        // Streams keep their real sign; only the headline total floors at 0.
+        // Ordering stays on the true value so the table doesn't collapse into
+        // an arbitrary run of zeroes at the bottom.
+        `SELECT mmp.match_id, mmp.player_id,
+                mmp.batting_points, mmp.bowling_points, mmp.fielding_points,
+                greatest(mmp.total_points, 0) AS total_points,
+                (m.player_of_match_id = mmp.player_id) AS is_player_of_match,
+                p.full_name, tm.short_name AS team
          FROM match_mvp_points mmp
+         JOIN matches m ON m.id = mmp.match_id
          JOIN players p ON p.id = mmp.player_id
          JOIN player_match_stats pms ON pms.match_id = mmp.match_id AND pms.player_id = mmp.player_id
          JOIN teams tm ON tm.id = pms.team_id

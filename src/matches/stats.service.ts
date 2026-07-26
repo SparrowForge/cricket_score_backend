@@ -3,6 +3,9 @@ import { Pool, PoolClient } from 'pg';
 import { PG_POOL } from '../database/database.module';
 import { PushService } from '../engagement/push.service';
 
+/** Flat MVP bonus for the Man of the Match, paid once the award is settled. */
+const MOTM_BONUS = 3;
+
 /**
  * Stats pipeline, run synchronously on match completion (no worker tier yet).
  * Everything is a rebuild (idempotent) rather than an increment, so re-running
@@ -173,28 +176,26 @@ export class StatsService {
          GROUP BY ce.fielder_player_id
        ),
        scored AS (
+         -- Each stream keeps its own sign. A batter who crawled below the match
+         -- run rate, or a fielder who shelled catches, genuinely cost their side
+         -- and that has to survive into the total instead of being floored away
+         -- stream by stream. Only the final figure is ever shown as 0.
          SELECT pms.match_id, pms.player_id,
-                greatest(
-                  pms.runs_scored + pms.fours * 1 + pms.sixes * 2
-                  + CASE WHEN pms.runs_scored >= 100 THEN 16 WHEN pms.runs_scored >= 50 THEN 8 ELSE 0 END
-                  + CASE WHEN pms.batted AND pms.balls_faced > 0
-                         THEN (pms.runs_scored - pms.balls_faced * mrr.rr / 6) * 0.5
-                         ELSE 0 END,
-                  0) AS batting,
-                greatest(
-                  pms.wickets_taken * 8 + pms.maidens * 8 + pms.dot_balls * 0.5
-                  + CASE WHEN pms.wickets_taken >= 5 THEN 16 WHEN pms.wickets_taken >= 3 THEN 8 ELSE 0 END
-                  + CASE WHEN pms.balls_bowled > 0
-                         THEN (pms.balls_bowled * mrr.rr / 6 - pms.runs_conceded) * 0.5
-                         ELSE 0 END
-                  + coalesce(bw.victim_runs, 0) * 0.4,
-                  0) AS bowling,
-                greatest(
-                  pms.catches * 8 + pms.stumpings * 12 + pms.run_outs * 6
-                  - coalesce(fe.dropped_catches, 0) * 4
-                  - coalesce(fe.missed_run_outs, 0) * 3
-                  - coalesce(fe.misfields, 0) * 2,
-                  0) AS fielding,
+                pms.runs_scored + pms.fours * 1 + pms.sixes * 2
+                + CASE WHEN pms.runs_scored >= 100 THEN 16 WHEN pms.runs_scored >= 50 THEN 8 ELSE 0 END
+                + CASE WHEN pms.batted AND pms.balls_faced > 0
+                       THEN (pms.runs_scored - pms.balls_faced * mrr.rr / 6) * 0.5
+                       ELSE 0 END AS batting,
+                pms.wickets_taken * 8 + pms.maidens * 8 + pms.dot_balls * 0.5
+                + CASE WHEN pms.wickets_taken >= 5 THEN 16 WHEN pms.wickets_taken >= 3 THEN 8 ELSE 0 END
+                + CASE WHEN pms.balls_bowled > 0
+                       THEN (pms.balls_bowled * mrr.rr / 6 - pms.runs_conceded) * 0.5
+                       ELSE 0 END
+                + coalesce(bw.victim_runs, 0) * 0.4 AS bowling,
+                pms.catches * 8 + pms.stumpings * 12 + pms.run_outs * 6
+                - coalesce(fe.dropped_catches, 0) * 4
+                - coalesce(fe.missed_run_outs, 0) * 3
+                - coalesce(fe.misfields, 0) * 2 AS fielding,
                 CASE WHEN m.winner_team_id IS NOT NULL AND pms.team_id = m.winner_team_id
                      THEN 1.1 ELSE 1.0 END AS win_factor
          FROM player_match_stats pms
@@ -213,18 +214,33 @@ export class StatsService {
        FROM scored`,
       [matchId],
     );
-    await client.query(
-      `UPDATE player_match_stats pms SET mvp_points = mmp.total_points
-       FROM match_mvp_points mmp
-       WHERE mmp.match_id = pms.match_id AND mmp.player_id = pms.player_id AND pms.match_id = $1`,
-      [matchId],
-    );
-    // Default Man of the Match: top MVP, unless the scorer already chose one.
+
+    // Man of the Match is settled BEFORE the award bonus is paid, so the bonus
+    // can never be what decides the winner. Default to the top scorer unless the
+    // scorer named someone on the finalize screen.
     await client.query(
       `UPDATE matches SET player_of_match_id = (
          SELECT player_id FROM match_mvp_points WHERE match_id = $1
          ORDER BY total_points DESC LIMIT 1)
        WHERE id = $1 AND player_of_match_id IS NULL AND status = 'completed'`,
+      [matchId],
+    );
+
+    // Flat award bonus — not multiplied by the win factor, since it is a fixed
+    // prize rather than a performance term. Recomputed from scratch on every
+    // run, so re-finalising with a different Man of the Match moves the 10
+    // points across instead of handing them out twice.
+    await client.query(
+      `UPDATE match_mvp_points mmp SET total_points = mmp.total_points + ${MOTM_BONUS}
+       FROM matches m
+       WHERE m.id = mmp.match_id AND mmp.match_id = $1 AND m.player_of_match_id = mmp.player_id`,
+      [matchId],
+    );
+
+    await client.query(
+      `UPDATE player_match_stats pms SET mvp_points = mmp.total_points
+       FROM match_mvp_points mmp
+       WHERE mmp.match_id = pms.match_id AND mmp.player_id = pms.player_id AND pms.match_id = $1`,
       [matchId],
     );
   }
@@ -471,13 +487,18 @@ export class StatsService {
       sr: 'strike_rate DESC NULLS LAST',
       economy: 'economy ASC NULLS LAST',
     };
-    return (
+    const rows = (
       await this.pool.query(
         `SELECT * FROM v_player_tournament_leaderboard WHERE tournament_id = $1
          ORDER BY ${order[metric] ?? order.runs} LIMIT 50`,
         [tournamentId],
       )
     ).rows;
+    // ORDER BY above ran on the true totals; the figure itself is floored at 0
+    // here so a player who cost their side never displays as a negative number.
+    return rows.map((r) => (
+      r.mvp_points == null ? r : { ...r, mvp_points: Math.max(Number(r.mvp_points), 0) }
+    ));
   }
 
   async headToHead(teamA: string, teamB: string) {

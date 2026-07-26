@@ -351,12 +351,15 @@ export class CatalogService {
       await this.pool.query(
         `SELECT p.id AS player_id, p.full_name, p.photo_url, ${lastTeam} AS team_short_name,
                 count(*)::int AS matches_played,
-                round(sum(pms.mvp_points), 2) AS mvp_points
+                -- A negative career total is shown as 0, but the ranking uses the
+                -- real figure so two players sitting on 0 still order by how far
+                -- below they actually are.
+                round(greatest(sum(pms.mvp_points), 0), 2) AS mvp_points
          FROM player_match_stats pms JOIN players p ON p.id = pms.player_id
          WHERE p.deleted_at IS NULL AND pms.mvp_points IS NOT NULL
          GROUP BY p.id, p.full_name, p.photo_url
          HAVING sum(pms.mvp_points) > 0
-         ORDER BY mvp_points DESC LIMIT $1`,
+         ORDER BY sum(pms.mvp_points) DESC LIMIT $1`,
         [lim],
       )
     ).rows;
