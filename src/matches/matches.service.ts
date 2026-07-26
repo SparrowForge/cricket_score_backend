@@ -4,6 +4,7 @@ import { Pool, PoolClient } from 'pg';
 import { PG_POOL } from '../database/database.module';
 import { REDIS } from '../redis/redis.module';
 import { LiveStateService } from './live-state.service';
+import { StatsService } from './stats.service';
 
 // GET /matches/:id cache TTL. The key embeds the live-state seq, so a scored
 // ball always misses to a fresh key; the TTL only bounds staleness for
@@ -61,6 +62,7 @@ export class MatchesService {
     @Inject(PG_POOL) private readonly pool: Pool,
     @Inject(REDIS) private readonly redis: Redis,
     private readonly live: LiveStateService,
+    private readonly stats: StatsService,
   ) {}
 
   async list(filter: { tournament?: string; org?: string; status?: string }) {
@@ -384,10 +386,24 @@ export class MatchesService {
     await client.query('DELETE FROM match_officials WHERE match_id = $1', [matchId]);
     await client.query('DELETE FROM match_interruptions WHERE match_id = $1', [matchId]);
     await client.query('DELETE FROM match_mvp_points WHERE match_id = $1', [matchId]);
+
+    // player_career_stats is the one aggregate with no match_id, so it neither
+    // cascades nor gets revisited by the finalize path once this match is gone.
+    // Note who played here BEFORE their per-match rows disappear, then recompute
+    // their careers from what survives — otherwise the runs scored in a deleted
+    // match stay on the leaderboards permanently.
+    const affected = (
+      await client.query('SELECT DISTINCT player_id FROM player_match_stats WHERE match_id = $1', [matchId])
+    ).rows.map((r) => r.player_id);
     await client.query('DELETE FROM player_match_stats WHERE match_id = $1', [matchId]);
+
     // 4. Innings, then the match itself.
     await client.query('DELETE FROM innings WHERE match_id = $1', [matchId]);
     await client.query('DELETE FROM matches WHERE id = $1', [matchId]);
+
+    // Runs last: the career rebuild reads player_match_stats joined to matches,
+    // so it must not see this match any more.
+    await this.stats.rebuildCareerStatsForPlayers(client, affected);
   }
 
   /** Stats tab payload: wagon wheel vectors, partnerships, run-rate series. */

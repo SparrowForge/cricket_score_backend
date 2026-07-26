@@ -354,8 +354,26 @@ export class StatsService {
     const players = (
       await client.query(`SELECT DISTINCT player_id FROM player_match_stats WHERE match_id = $1`, [matchId])
     ).rows;
+    await this.rebuildCareerStatsForPlayers(client, players.map((p) => p.player_id));
+  }
 
-    for (const { player_id } of players) {
+  /**
+   * Recompute career totals for specific players from their surviving
+   * `player_match_stats` rows.
+   *
+   * Exposed separately because career stats are the one aggregate with no
+   * `match_id` of their own: they don't cascade when a match is deleted, and
+   * the finalize path only ever revisits players who appear in the match being
+   * finalized. Delete a match and its participants keep the runs it
+   * contributed forever — which is exactly how a player with a single 0-run
+   * innings ended up leading the run charts with 28. Callers that remove
+   * player_match_stats rows must call this for the affected players.
+   *
+   * A player left with no per-match rows at all has their career rows dropped
+   * rather than left orphaned.
+   */
+  async rebuildCareerStatsForPlayers(client: PoolClient, playerIds: string[]) {
+    for (const player_id of playerIds) {
       await client.query(`DELETE FROM player_career_stats WHERE player_id = $1`, [player_id]);
       await client.query(
         `INSERT INTO player_career_stats (player_id, format_family, matches_played, innings_batted,
