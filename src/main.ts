@@ -39,7 +39,8 @@ async function bootstrap() {
   );
 
   const port = Number(process.env.PORT ?? 3001);
-  await app.listen(port);
+  // Bind all interfaces — inside a container 'localhost' is unreachable from the host proxy.
+  await app.listen(port, '0.0.0.0');
   console.log(`CricLive API listening on :${port} (prefix /${prefix})`);
 }
 bootstrap();

@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.gitignore
+
+# Never bake production secrets into the image — Back4App injects env vars.
+.env
+.env.*
+
+*.log
+doc
+reference
+render.yaml
+Dockerfile
+.dockerignore
