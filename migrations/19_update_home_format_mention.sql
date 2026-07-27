@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration 17: Enrich home page content with more features
+-- Migration 19: Update home page to mention The Hundred format
 -- ============================================================
 
 UPDATE cms_pages
@@ -71,25 +71,3 @@ SET blocks = '[
   }
 ]'
 WHERE slug = 'home';
-
--- Also update the pricing page to show all plans with comparison
-UPDATE cms_pages
-SET blocks = '[
-  {
-    "id": "pricing_hero",
-    "type": "hero",
-    "props": {
-      "heading": "Simple, Transparent Pricing",
-      "subheading": "Start free and scale as your cricket operations grow. No hidden fees, cancel anytime."
-    }
-  },
-  {
-    "id": "plans",
-    "type": "pricing_table",
-    "props": {
-      "plan_slugs": ["free", "club", "league", "pro"],
-      "show_comparison": true
-    }
-  }
-]'
-WHERE slug = 'pricing';
