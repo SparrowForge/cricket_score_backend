@@ -11,7 +11,7 @@ import { StatsService } from './stats.service';
 // non-scoring edits (venue, officials, squad).
 const DETAIL_CACHE_TTL_S = 15;
 
-/** Scorecard dismissal line: 'caught Dhoni bowled Jadeja' | 'caught & bowled Jadeja' | 'run out Jadeja' | 'bowled Bumrah' … */
+/** Scorecard dismissal line: 'caught Dhoni bowled Jadeja' | 'caught & bowled Jadeja' | 'run out (Jadeja)' | 'bowled Bumrah' … */
 type WicketRow = {
   dismissed_player_id: string;
   wicket_type: string;
@@ -40,7 +40,11 @@ function dismissalText(w: Pick<WicketRow, 'wicket_type' | 'bowler_id' | 'fielder
     case 'hit_wicket':
       return `hit wicket bowled ${w.bowler_name}`;
     case 'run_out':
-      return w.fielder_name ? `run out ${w.fielder_name}` : 'run out';
+      // Scorebook convention brackets the fielder who effected the run out —
+      // "run out (Jadeja)" — which also keeps it visibly distinct from the
+      // "c Fielder b Bowler" forms, where the bowler earns the wicket and the
+      // fielder does not.
+      return w.fielder_name ? `run out (${w.fielder_name})` : 'run out';
     default:
       return w.wicket_type.replace(/_/g, ' ');
   }
@@ -804,7 +808,15 @@ export class MatchesService {
                 b.non_striker_id, np.full_name AS non_striker_name,
                 b.bowler_id, bp.full_name AS bowler_name,
                 b.dismissed_player_id, dp.full_name AS dismissed_player_name,
-                c.fielder_player_id, fp.full_name AS fielder_name
+                c.fielder_player_id, fp.full_name AS fielder_name,
+                -- The ball's OWN dismissal fielder and broken end, distinct from
+                -- c.fielder_player_id above: that one tags a fielding event
+                -- (dropped catch, misfield) against a delivery, whereas these
+                -- are who the wicket is credited to and which end it fell at.
+                -- The ball-edit form needs these to preserve them on save —
+                -- editBall supersedes the row, so anything it isn't sent is lost.
+                b.fielder_id AS ball_fielder_id, bf.full_name AS ball_fielder_name,
+                b.wicket_broken_end
          FROM commentary_entries c
          LEFT JOIN users u ON u.id = c.author_id
          LEFT JOIN balls b ON b.id = c.ball_id
@@ -813,6 +825,7 @@ export class MatchesService {
          LEFT JOIN players bp ON bp.id = b.bowler_id
          LEFT JOIN players dp ON dp.id = b.dismissed_player_id
          LEFT JOIN players fp ON fp.id = c.fielder_player_id
+         LEFT JOIN players bf ON bf.id = b.fielder_id
          WHERE c.match_id = $1 AND ($3::timestamptz IS NULL OR c.created_at < $3)
            AND ($4::int IS NULL OR c.innings_id = (SELECT id FROM innings WHERE match_id = $1 AND seq = $4))
          ORDER BY c.created_at DESC LIMIT $2`,
