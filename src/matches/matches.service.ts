@@ -177,7 +177,7 @@ export class MatchesService {
         `SELECT m.*, ta.name AS team_a_name, ta.short_name AS team_a_short, ta.logo_url AS team_a_logo,
                 tb.name AS team_b_name, tb.short_name AS team_b_short, tb.logo_url AS team_b_logo,
                 v.name AS venue_name, t.name AS tournament_name, t.slug AS tournament_slug,
-                pom.full_name AS player_of_match_name
+                pom.full_name AS player_of_match_name, pom.photo_url AS player_of_match_photo
          FROM matches m
          JOIN teams ta ON ta.id = m.team_a_id
          JOIN teams tb ON tb.id = m.team_b_id

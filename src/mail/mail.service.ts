@@ -82,12 +82,25 @@ export class MailService {
       host: this.host,
       port,
       secure: port === 465,
-      requireTLS: port !== 465, // refuse to send in the clear if STARTTLS is unavailable
+      // 587 is the submission port and must upgrade — refuse to send in the
+      // clear there. 465 is already encrypted end to end. Port 25 is only ever
+      // used for a local relay on the same machine (cPanel's Exim), where many
+      // installs offer no STARTTLS at all and forcing it just fails the send.
+      requireTLS: port === 587,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
       connectionTimeout: SMTP_TIMEOUT_MS,
       greetingTimeout: SMTP_TIMEOUT_MS,
       socketTimeout: SMTP_TIMEOUT_MS,
       dnsTimeout: SMTP_TIMEOUT_MS,
+      // Shared-hosting mail servers (cPanel and friends) almost always present a
+      // certificate for the box's own hostname, so connecting via `localhost` or
+      // `mail.<domain>` fails validation even though the hop never leaves the
+      // machine. Opt in with SMTP_ALLOW_SELF_SIGNED=true rather than disabling
+      // verification by default, which would silently weaken a real external
+      // provider too.
+      ...(process.env.SMTP_ALLOW_SELF_SIGNED === 'true'
+        ? { tls: { rejectUnauthorized: false } }
+        : {}),
     };
     return nodemailer.createTransport(options);
   }

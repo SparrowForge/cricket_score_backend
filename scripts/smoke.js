@@ -42,11 +42,23 @@ async function main() {
   // SMTP
   try {
     const nodemailer = require('nodemailer');
+    // Mirror MailService: TLS mode follows the port (465 implicit, 587
+    // STARTTLS) rather than SMTP_SECURE, so the smoke test can't pass while
+    // the app fails on a stale flag. Self-signed is opt-in the same way —
+    // shared-hosting mail servers present a cert for the box's own hostname.
+    const port = Number(process.env.SMTP_PORT ?? 587);
     const t = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT),
-      secure: process.env.SMTP_SECURE === 'true',
+      port,
+      secure: port === 465,
+      requireTLS: port !== 465,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 10_000,
+      ...(process.env.SMTP_ALLOW_SELF_SIGNED === 'true'
+        ? { tls: { rejectUnauthorized: false } }
+        : {}),
     });
     await t.verify();
     console.log(`✔ SMTP: authenticated as ${process.env.SMTP_USER} @ ${process.env.SMTP_HOST}`);
