@@ -268,15 +268,28 @@ export class CatalogService {
     p.career_stats = (
       await this.pool.query(`SELECT * FROM player_career_stats WHERE player_id = $1`, [playerId])
     ).rows;
+    // `batted` separates a genuine duck from never coming to the crease, and
+    // `is_out` marks a not-out innings — without both, the profile shows "0"
+    // for a player who never batted.
     p.recent_matches = (
       await this.pool.query(
-        `SELECT pms.match_id, pms.runs_scored, pms.balls_faced, pms.wickets_taken, pms.runs_conceded,
+        `SELECT pms.match_id, pms.runs_scored, pms.balls_faced, pms.batted, pms.is_out,
+                pms.wickets_taken, pms.runs_conceded,
                 m.scheduled_start, m.result_summary
          FROM player_match_stats pms JOIN matches m ON m.id = pms.match_id
          WHERE pms.player_id = $1 ORDER BY m.scheduled_start DESC LIMIT 10`,
         [playerId],
       )
     ).rows;
+    // Times named player of the match — the award the scorer picks at finalize,
+    // distinct from the computed mvp_points board that playerLeaders() ranks.
+    p.player_of_match_awards = (
+      await this.pool.query(
+        `SELECT count(*)::int AS n FROM matches
+         WHERE player_of_match_id = $1 AND status = 'completed'`,
+        [playerId],
+      )
+    ).rows[0].n;
     p.teams = (
       await this.pool.query(
         `SELECT t.id, t.name, t.short_name, t.logo_url
