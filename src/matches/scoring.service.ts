@@ -402,12 +402,18 @@ export class ScoringService {
 
       // ---- Auto ball-by-ball commentary ----
       const isHighlight = !!ev.wicket || isFour || isSix;
+      const wicketNames = ev.wicket
+        ? {
+            dismissed: await this.playerName(client, ev.wicket.dismissedPlayerId),
+            fielder: await this.playerName(client, ev.wicket.fielderId),
+          }
+        : {};
       await client.query(
         `INSERT INTO commentary_entries (match_id, innings_id, ball_id, source, body, is_highlight)
          VALUES ($1, $2, $3, 'auto', $4, $5)`,
         [matchId, ls.innings_id, inserted.rows[0].id,
          this.commentaryText(overNumber, ballInOver, bowl.name, bat.name, ev, totalExtras, isFour, isSix, post,
-           dto.wagon?.region ?? null),
+           dto.wagon?.region ?? null, wicketNames),
          isHighlight],
       );
 
@@ -1313,12 +1319,19 @@ export class ScoringService {
         currentBowler = b.bowler_id;
 
         // ---- Ball-by-ball commentary, regenerated against the replayed score ----
+        const replayWicketNames = b.is_wicket
+          ? {
+              dismissed: await this.playerName(client, b.dismissed_player_id),
+              fielder: await this.playerName(client, b.fielder_id),
+            }
+          : {};
         await client.query(
           `INSERT INTO commentary_entries (match_id, innings_id, ball_id, source, body, is_highlight, created_at)
            VALUES ($1,$2,$3,'auto',$4,$5,coalesce($6::timestamptz, now()))`,
           [match.id, inningsId, b.id,
            this.commentaryText(b.over_number, b.ball_in_over, bowl.name, bat.name, ev,
-             b.runs_extras, b.is_boundary_four, b.is_boundary_six, engine, b.wagon?.region ?? null),
+             b.runs_extras, b.is_boundary_four, b.is_boundary_six, engine, b.wagon?.region ?? null,
+             replayWicketNames),
            b.is_wicket || b.is_boundary_four || b.is_boundary_six,
            tsFor(ballTs, b)],
         );
@@ -1567,6 +1580,19 @@ export class ScoringService {
   }
 
   /**
+   * Name for a player id, for the wicket commentary. Neither participant it
+   * resolves is reachable from the live cards: a run out can dismiss the
+   * non-striker (who has no batter card until they face a ball) and the
+   * fielder is on the other side entirely. Only called on wicket balls, so it
+   * costs at most two queries per dismissal.
+   */
+  private async playerName(client: PoolClient, playerId?: string | null): Promise<string | null> {
+    if (!playerId) return null;
+    const p = (await client.query(`SELECT full_name FROM players WHERE id = $1`, [playerId])).rows[0];
+    return p?.full_name ?? null;
+  }
+
+  /**
    * Body of the end-of-innings summary card. Derived entirely from stored balls
    * and innings totals, so replayInnings can rebuild it verbatim after a
    * correction — `reason` also accepts the innings' own status ('declared' /
@@ -1630,17 +1656,61 @@ export class ScoringService {
       (bowlTxt ? ` | BOWL: ${bowlTxt}` : '');
   }
 
+  /**
+   * Dismissal clause for the ball commentary. Two dismissals carry a name the
+   * `{bowler} to {striker}` head does not already supply:
+   *  - run out: the batter dismissed can be the NON-striker, so naming them is
+   *    the only way to tell who actually walked off; the fielder who effected
+   *    it is bracketed, matching the scorebook convention dismissalText() uses
+   *    on the scorecard ("run out (Jadeja)").
+   *  - caught / caught behind: the catch belongs to a fielder nobody has named
+   *    yet. Caught & bowled takes no "by" name — there the catcher is the
+   *    bowler, who the head already names.
+   * Every name is optional (fielder_id is nullable on a run out — the throw
+   * often can't be attributed), so each arm degrades to the bare wording.
+   */
+  private wicketClause(
+    ev: BallEvent & { wicket: NonNullable<BallEvent['wicket']> },
+    dismissed: string | null, fielder: string | null,
+  ): string {
+    const w = ev.wicket;
+    const plain = w.type.replace(/_/g, ' ');
+    switch (w.type) {
+      case 'run_out':
+        return `${dismissed ? `${dismissed} ` : ''}run out${fielder ? ` (${fielder})` : ''}`;
+      case 'caught':
+      case 'caught_behind':
+        // A bowler holding his own catch is caught & bowled even when it was
+        // scored as plain 'caught' — same normalisation the scorecard applies.
+        if (w.fielderId && w.fielderId === ev.bowlerId) return 'caught & bowled';
+        return `${plain}${fielder ? ` by ${fielder}` : ''}`;
+      case 'caught_and_bowled':
+        // Spelled the same either way it was scored, so the feed never shows
+        // both "caught & bowled" and "caught and bowled" for one dismissal.
+        return 'caught & bowled';
+      default:
+        return plain;
+    }
+  }
+
   private commentaryText(
     over: number, ballInOver: number, bowler: string, striker: string,
     ev: BallEvent, totalExtras: number, four: boolean, six: boolean, post: LiveInningsState,
     region: string | null = null,
+    wicketNames: { dismissed?: string | null; fielder?: string | null } = {},
   ): string {
     const head = `${over}.${ballInOver} — ${bowler} to ${striker}, `;
     // Shot placement from the scorer's wagon tap, e.g. 'mid_wicket' → ' to mid wicket'
     const to = region && ev.extraType !== 'wide' ? ` to ${region.replace(/_/g, ' ')}` : '';
     let desc: string;
     if (ev.wicket) {
-      desc = `WICKET! ${ev.wicket.type.replace(/_/g, ' ')}${ev.runsBatter ? ` (${ev.runsBatter} run${ev.runsBatter > 1 ? 's' : ''} completed)` : ''}`;
+      const clause = this.wicketClause(
+        ev as BallEvent & { wicket: NonNullable<BallEvent['wicket']> },
+        wicketNames.dismissed ?? null, wicketNames.fielder ?? null,
+      );
+      // Comma, not a second bracket: the run-out clause already ends in one
+      // ("run out (Jadeja)"), and "(Jadeja) (2 runs completed)" reads badly.
+      desc = `WICKET! ${clause}${ev.runsBatter ? `, ${ev.runsBatter} run${ev.runsBatter > 1 ? 's' : ''} completed` : ''}`;
     } else if (six) desc = `SIX!${region ? ` Launched over ${region.replace(/_/g, ' ')}` : ' That has sailed over the rope'}`;
     else if (four) desc = `FOUR!${region ? ` Finds the ${region.replace(/_/g, ' ')} boundary` : ' Finds the boundary'}`;
     else if (ev.extraType === 'wide') desc = `wide${totalExtras > 1 ? `, ${totalExtras} extras` : ''}`;
