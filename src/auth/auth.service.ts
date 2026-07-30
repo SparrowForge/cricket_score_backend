@@ -8,12 +8,16 @@ import { PG_POOL } from '../database/database.module';
 import { MailService } from '../mail/mail.service';
 import { RegisterDto, LoginDto } from './dto';
 
-/** Comma-separated so mobile app client IDs (iOS / Android) can be added alongside the web one. */
+/**
+ * Accepted `aud` values. GOOGLE_CLIENT_ID (web) is always included — GOOGLE_CLIENT_IDS only
+ * adds mobile client IDs, so a partial list there can't silently lock out web sign-in.
+ */
 const googleAudiences = () =>
-  (process.env.GOOGLE_CLIENT_IDS ?? process.env.GOOGLE_CLIENT_ID ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  [...new Set(
+    [process.env.GOOGLE_CLIENT_ID, ...(process.env.GOOGLE_CLIENT_IDS ?? '').split(',')]
+      .map((s) => s?.trim())
+      .filter((s): s is string => Boolean(s)),
+  )];
 
 const REFRESH_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 30);
 
