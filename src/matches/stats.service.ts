@@ -48,6 +48,38 @@ export class StatsService {
     }
   }
 
+  /**
+   * Re-score a finalised match after an MVP formula change, and push the new
+   * figures through the tournament and career rollups.
+   *
+   * Deliberately NOT `finalizeMatch`: that also calls `notifyFollowers`, and
+   * `notifications` has no unique constraint, so replaying it would send every
+   * follower a duplicate "match finished" alert for a match they were told
+   * about days ago. Head-to-head and per-match facts are untouched too — they
+   * are derived from ball data the formula change cannot affect.
+   */
+  async recalculateMvp(matchId: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const match = (await client.query(`SELECT * FROM matches WHERE id = $1`, [matchId])).rows[0];
+      if (!match) return;
+
+      await this.buildMvpPoints(client, matchId);
+      if (match.tournament_id) {
+        await this.rebuildTournamentStats(client, match.tournament_id);
+      }
+      await this.rebuildCareerStats(client, matchId);
+      await client.query('COMMIT');
+      this.logger.log(`MVP recalculated for match ${matchId}`);
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   // ---------- per-match facts ----------
   private async buildPlayerMatchStats(client: PoolClient, match: any) {
     await client.query(`DELETE FROM player_match_stats WHERE match_id = $1`, [match.id]);
@@ -130,15 +162,16 @@ export class StatsService {
 
   // ---------- MVP ----------
   /**
-   * MVP points with match context, not just raw tallies:
-   * - batting: runs + boundary bonus + milestone bonus + pace-vs-match-run-rate
-   *   impact (runs above/below par for the balls consumed — rewards
-   *   match-turning quick runs, discounts slow crawls);
-   * - bowling: wickets + maidens + dots + runs saved vs the match run rate
-   *   (economy in context) + a match-turning bonus for dismissing a set
-   *   batter (scaled by the victim's runs at the fall);
-   * - fielding: unchanged;
-   * - match-winning effect: every component ×1.1 for the winning team.
+   * MVP points. The authoritative specification, with worked examples, lives in
+   * `docs/MVP_SCORING.md` — keep the two in step when either changes.
+   *
+   * Summary: batting = runs + boundary bonus + a milestone scaled to the innings
+   * length + pace against the match run rate; bowling = wickets, dots, maidens,
+   * a haul bonus, economy against the match run rate and the value of the
+   * batters removed; fielding = catches/stumpings/run-outs less errors. Each
+   * stream keeps its own sign, so a crawl or a shelled catch genuinely costs the
+   * player. Flat match bonuses (+2 winning side, +3 player of the match) are
+   * added last, and the whole figure is multiplied by 1.1 for the winning team.
    */
   private async buildMvpPoints(client: PoolClient, matchId: string) {
     await client.query(`DELETE FROM match_mvp_points WHERE match_id = $1`, [matchId]);
@@ -149,10 +182,21 @@ export class StatsService {
                      ELSE 0 END AS rr
          FROM innings WHERE match_id = $1
        ),
+       ov AS (
+         -- Innings length drives the batting milestones (4×O / 6×O / 8×O / 10×O),
+         -- so a 24 in a 5-over game is rewarded like a fifty in a T20.
+         SELECT coalesce(
+                  (SELECT (m.rules_snapshot->>'overs_per_innings')::numeric
+                     FROM matches m WHERE m.id = $1),
+                  (SELECT max(max_overs)::numeric FROM innings WHERE match_id = $1),
+                  20) AS o
+       ),
        big_wickets AS (
          -- Match-turning bowling: credit for removing a batter who was set,
-         -- weighted by the runs the victim had scored at the fall.
-         SELECT b.bowler_id AS player_id, sum(victim.runs)::numeric AS victim_runs
+         -- weighted by the runs the victim had made — capped PER WICKET so one
+         -- huge scalp cannot dominate the innings.
+         SELECT b.bowler_id AS player_id,
+                sum(least(victim.runs * 0.2, 4))::numeric AS victim_value
          FROM balls b
          JOIN innings i ON i.id = b.innings_id
          CROSS JOIN LATERAL (
@@ -181,26 +225,39 @@ export class StatsService {
          -- and that has to survive into the total instead of being floored away
          -- stream by stream. Only the final figure is ever shown as 0.
          SELECT pms.match_id, pms.player_id,
-                pms.runs_scored + pms.fours * 1 + pms.sixes * 2
-                + CASE WHEN pms.runs_scored >= 100 THEN 16 WHEN pms.runs_scored >= 50 THEN 8 ELSE 0 END
-                + CASE WHEN pms.batted AND pms.balls_faced > 0
-                       THEN (pms.runs_scored - pms.balls_faced * mrr.rr / 6) * 0.5
-                       ELSE 0 END AS batting,
-                pms.wickets_taken * 8 + pms.maidens * 8 + pms.dot_balls * 0.5
-                + CASE WHEN pms.wickets_taken >= 5 THEN 16 WHEN pms.wickets_taken >= 3 THEN 8 ELSE 0 END
-                + CASE WHEN pms.balls_bowled > 0
-                       THEN (pms.balls_bowled * mrr.rr / 6 - pms.runs_conceded) * 0.5
+                pms.runs_scored + pms.fours * 0.5 + pms.sixes * 1
+                + CASE WHEN pms.runs_scored >= 10 * ov.o THEN 16
+                       WHEN pms.runs_scored >= 8 * ov.o THEN 12
+                       WHEN pms.runs_scored >= 6 * ov.o THEN 8
+                       WHEN pms.runs_scored >= 4 * ov.o THEN 4
                        ELSE 0 END
-                + coalesce(bw.victim_runs, 0) * 0.4 AS bowling,
-                pms.catches * 8 + pms.stumpings * 12 + pms.run_outs * 6
-                - coalesce(fe.dropped_catches, 0) * 4
-                - coalesce(fe.missed_run_outs, 0) * 3
-                - coalesce(fe.misfields, 0) * 2 AS fielding,
+                + CASE WHEN pms.batted AND pms.balls_faced > 0
+                       THEN greatest(-8, least(8,
+                            (pms.runs_scored - pms.balls_faced * mrr.rr / 6) * 0.5))
+                       ELSE 0 END AS batting,
+                pms.wickets_taken * 6 + pms.maidens * 4 + pms.dot_balls * 0.25
+                + CASE WHEN pms.wickets_taken >= 5 THEN 14
+                       WHEN pms.wickets_taken = 4 THEN 10
+                       WHEN pms.wickets_taken = 3 THEN 6
+                       WHEN pms.wickets_taken = 2 THEN 3
+                       ELSE 0 END
+                + CASE WHEN pms.balls_bowled > 0
+                       THEN greatest(-8, least(8,
+                            (pms.balls_bowled * mrr.rr / 6 - pms.runs_conceded) * 0.5))
+                       ELSE 0 END
+                + coalesce(bw.victim_value, 0) AS bowling,
+                pms.catches * 6 + pms.stumpings * 8 + pms.run_outs * 8
+                - coalesce(fe.dropped_catches, 0) * 3
+                - coalesce(fe.missed_run_outs, 0) * 2
+                - coalesce(fe.misfields, 0) * 1 AS fielding,
+                CASE WHEN m.winner_team_id IS NOT NULL AND pms.team_id = m.winner_team_id
+                     THEN 2 ELSE 0 END AS win_bonus,
                 CASE WHEN m.winner_team_id IS NOT NULL AND pms.team_id = m.winner_team_id
                      THEN 1.1 ELSE 1.0 END AS win_factor
          FROM player_match_stats pms
          JOIN matches m ON m.id = pms.match_id
          CROSS JOIN mrr
+         CROSS JOIN ov
          LEFT JOIN big_wickets bw ON bw.player_id = pms.player_id
          LEFT JOIN fielding_errors fe ON fe.player_id = pms.player_id
          WHERE pms.match_id = $1
@@ -210,30 +267,40 @@ export class StatsService {
               round(batting * win_factor, 2),
               round(bowling * win_factor, 2),
               round(fielding * win_factor, 2),
-              round((batting + bowling + fielding) * win_factor, 2)
+              -- Flat +2 for the winning side rides the same ×1.1 as everything
+              -- else; the player-of-the-match +3 is added once that is settled.
+              round((batting + bowling + fielding + win_bonus) * win_factor, 2)
        FROM scored`,
       [matchId],
     );
 
-    // Man of the Match is settled BEFORE the award bonus is paid, so the bonus
-    // can never be what decides the winner. Default to the top scorer unless the
-    // scorer named someone on the finalize screen.
+    // Player of the Match is settled BEFORE the award bonus is paid, so the
+    // bonus can never be what decides the winner. Ranked on performance only
+    // (the three stored components), not the total, which already carries the
+    // winning-side +2. Default to the top scorer unless the scorer named
+    // someone on the finalize screen.
     await client.query(
       `UPDATE matches SET player_of_match_id = (
          SELECT player_id FROM match_mvp_points WHERE match_id = $1
-         ORDER BY total_points DESC LIMIT 1)
+         ORDER BY batting_points + bowling_points + fielding_points DESC LIMIT 1)
        WHERE id = $1 AND player_of_match_id IS NULL AND status = 'completed'`,
       [matchId],
     );
 
-    // Flat award bonus — not multiplied by the win factor, since it is a fixed
-    // prize rather than a performance term. Recomputed from scratch on every
-    // run, so re-finalising with a different Man of the Match moves the 10
-    // points across instead of handing them out twice.
+    // The award bonus rides the same ×1.1 as the rest of the winner's score, so
+    // the stored total is exactly (bat + bowl + field + 2 + 3) × factor.
+    // Recomputed from scratch on every run, so re-finalising with a different
+    // Player of the Match moves the points across instead of paying twice.
     await client.query(
-      `UPDATE match_mvp_points mmp SET total_points = mmp.total_points + ${MOTM_BONUS}
+      `UPDATE match_mvp_points mmp
+          SET total_points = round(mmp.total_points + ${MOTM_BONUS} *
+              CASE WHEN m.winner_team_id IS NOT NULL AND pms.team_id = m.winner_team_id
+                   THEN 1.1 ELSE 1.0 END, 2)
        FROM matches m
-       WHERE m.id = mmp.match_id AND mmp.match_id = $1 AND m.player_of_match_id = mmp.player_id`,
+       JOIN player_match_stats pms
+         ON pms.match_id = m.id AND pms.player_id = m.player_of_match_id
+       WHERE m.id = mmp.match_id AND mmp.match_id = $1
+         AND m.player_of_match_id = mmp.player_id`,
       [matchId],
     );
 
