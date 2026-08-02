@@ -130,6 +130,7 @@ class ResumeDto {
 class UpdateMatchSettingsDto {
   @IsOptional() @IsInt() @Min(1) overs_per_innings?: number;
   @IsOptional() @IsInt() @Min(1) players_per_side?: number;
+  @IsOptional() @IsInt() @Min(1) wickets_to_fall?: number;
   @IsOptional() @IsInt() @Min(1) max_overs_per_bowler?: number | null;
   @IsOptional() @IsBoolean() free_hit?: boolean;
   @IsOptional() @IsBoolean() dls_enabled?: boolean;

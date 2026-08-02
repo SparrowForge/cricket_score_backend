@@ -134,6 +134,7 @@ export class ScoringService {
     dto: {
       overs_per_innings?: number;
       players_per_side?: number;
+      wickets_to_fall?: number;
       max_overs_per_bowler?: number | null;
       free_hit?: boolean;
       dls_enabled?: boolean;
@@ -189,11 +190,13 @@ export class ScoringService {
       if (dto.players_per_side !== undefined) {
         rules.players_per_side = dto.players_per_side;
         // wickets_to_fall drives all-out detection and the "N all out" label.
-        // Every built-in format keeps it at players_per_side − 1, and the
-        // settings form doesn't expose it, so derive it here — leaving it stale
-        // ends the innings after the wrong number of wickets.
-        rules.wickets_to_fall = Math.max(1, dto.players_per_side - 1);
+        // Default to players_per_side − 1 (one batter left at crease), but allow explicit override
+        // to support "last man batting" rule where wickets_to_fall = players_per_side.
+        if (dto.wickets_to_fall === undefined) {
+          rules.wickets_to_fall = Math.max(1, dto.players_per_side - 1);
+        }
       }
+      if (dto.wickets_to_fall !== undefined) rules.wickets_to_fall = dto.wickets_to_fall;
       if (dto.max_overs_per_bowler !== undefined) rules.max_overs_per_bowler = dto.max_overs_per_bowler;
       if (dto.free_hit !== undefined) {
         if (!rules.no_ball) rules.no_ball = { runs: 1, free_hit: dto.free_hit };
