@@ -336,6 +336,15 @@ export class PlayersController {
     return this.catalog.player(playerId);
   }
 
+  /** Every match the player appears in, newest first — the profile's "All matches" view.
+   *  Declared BEFORE the :playerId PATCH/DELETE block for readability only; the
+   *  path is distinct, so ordering does not matter here. */
+  @Public()
+  @Get('players/:playerId/matches')
+  playerMatches(@Param('playerId', ParseUUIDPipe) playerId: string) {
+    return this.catalog.playerMatches(playerId);
+  }
+
   @Patch('players/:playerId')
   @UseGuards(JwtAuthGuard)
   async update(

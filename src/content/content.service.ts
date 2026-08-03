@@ -61,7 +61,10 @@ export class ContentService {
     const res = await this.pool.query(
       `INSERT INTO news_articles (organization_id, tournament_id, match_id, author_id, title, slug,
                                   excerpt, body, cover_asset_id, tags, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, coalesce($10,'{}'), 'draft')
+       -- Both coalesce branches need the cast: untyped, Postgres resolves the
+       -- expression to text and the text[] column rejects it, so every insert
+       -- fails regardless of what tags holds.
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, coalesce($10::text[],'{}'::text[]), 'draft')
        ON CONFLICT (slug) DO NOTHING RETURNING *`,
       [orgId, dto.tournament_id ?? null, dto.match_id ?? null, authorId, dto.title, dto.slug,
        dto.excerpt ?? null, JSON.stringify(dto.body ?? {}), dto.cover_asset_id ?? null, dto.tags],
@@ -85,7 +88,11 @@ export class ContentService {
 
   async publishNews(id: string, publish: boolean) {
     const res = await this.pool.query(
-      `UPDATE news_articles SET status = $2, published_at = CASE WHEN $2 = 'published' THEN now() ELSE published_at END
+      // $2 is both assigned to the page_status column and compared to a text
+      // literal; without the cast on both uses Postgres deduces conflicting
+      // types for the one parameter and the statement never runs.
+      `UPDATE news_articles SET status = $2::page_status,
+              published_at = CASE WHEN $2::page_status = 'published' THEN now() ELSE published_at END
        WHERE id = $1 RETURNING id, status, published_at`,
       [id, publish ? 'published' : 'unpublished'],
     );

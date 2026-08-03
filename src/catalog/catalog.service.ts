@@ -268,19 +268,14 @@ export class CatalogService {
     p.career_stats = (
       await this.pool.query(`SELECT * FROM player_career_stats WHERE player_id = $1`, [playerId])
     ).rows;
-    // `batted` separates a genuine duck from never coming to the crease, and
-    // `is_out` marks a not-out innings — without both, the profile shows "0"
-    // for a player who never batted.
-    p.recent_matches = (
+    p.recent_matches = await this.playerMatches(playerId, 10);
+    p.match_count = (
       await this.pool.query(
-        `SELECT pms.match_id, pms.runs_scored, pms.balls_faced, pms.batted, pms.is_out,
-                pms.wickets_taken, pms.runs_conceded,
-                m.scheduled_start, m.result_summary
-         FROM player_match_stats pms JOIN matches m ON m.id = pms.match_id
-         WHERE pms.player_id = $1 ORDER BY m.scheduled_start DESC LIMIT 10`,
+        `SELECT count(*)::int AS n FROM player_match_stats WHERE player_id = $1`,
         [playerId],
       )
-    ).rows;
+    ).rows[0].n;
+    p.record = await this.playerRecord(playerId);
     // Times named player of the match — the award the scorer picks at finalize,
     // distinct from the computed mvp_points board that playerLeaders() ranks.
     p.player_of_match_awards = (
@@ -300,6 +295,66 @@ export class CatalogService {
       )
     ).rows;
     return p;
+  }
+
+  /**
+   * A player's match list, newest first. `limit` omitted returns every match —
+   * the profile shows the last 10 and loads the rest on demand.
+   *
+   * `batted` separates a genuine duck from never coming to the crease, and
+   * `is_out` marks a not-out innings — without both, the profile shows "0" for
+   * a player who never batted. `outcome` is null while a match is still in
+   * progress, which is not the same as a no-result.
+   */
+  async playerMatches(playerId: string, limit?: number) {
+    return (
+      await this.pool.query(
+        `SELECT pms.match_id, pms.runs_scored, pms.balls_faced, pms.batted, pms.is_out,
+                pms.fours, pms.sixes,
+                pms.wickets_taken, pms.runs_conceded, pms.balls_bowled,
+                pms.catches, pms.stumpings, pms.run_outs, pms.mvp_points,
+                m.scheduled_start, m.result_summary, m.status,
+                own.short_name AS team_short,
+                opp.short_name AS opponent_short,
+                (m.player_of_match_id = pms.player_id) AS is_player_of_match,
+                CASE WHEN m.status NOT IN ('completed','abandoned','no_result') THEN NULL
+                     WHEN m.winner_team_id = pms.team_id THEN 'won'
+                     WHEN m.result_type = 'win' THEN 'lost'
+                     WHEN m.result_type = 'tie' THEN 'tie'
+                     ELSE 'no_result' END AS outcome
+         FROM player_match_stats pms
+         JOIN matches m ON m.id = pms.match_id
+         LEFT JOIN teams own ON own.id = pms.team_id
+         LEFT JOIN teams opp ON opp.id = CASE WHEN pms.team_id = m.team_a_id
+                                              THEN m.team_b_id ELSE m.team_a_id END
+         WHERE pms.player_id = $1
+         ORDER BY m.scheduled_start DESC
+         LIMIT $2`,
+        [playerId, limit ?? null],
+      )
+    ).rows;
+  }
+
+  /**
+   * Win/loss record across matches that reached a conclusion. A match still in
+   * progress counts towards nothing — `played` is decided matches, so
+   * won + lost + tied + no_result always equals it.
+   */
+  async playerRecord(playerId: string) {
+    return (
+      await this.pool.query(
+        `SELECT count(*) FILTER (WHERE m.winner_team_id = pms.team_id)::int AS won,
+                count(*) FILTER (WHERE m.result_type = 'win'
+                                   AND m.winner_team_id IS DISTINCT FROM pms.team_id)::int AS lost,
+                count(*) FILTER (WHERE m.result_type = 'tie')::int AS tied,
+                count(*) FILTER (WHERE m.result_type IN ('no_result','abandoned'))::int AS no_result,
+                count(*)::int AS played
+         FROM player_match_stats pms
+         JOIN matches m ON m.id = pms.match_id
+         WHERE pms.player_id = $1 AND m.status IN ('completed','abandoned','no_result')`,
+        [playerId],
+      )
+    ).rows[0];
   }
 
   /** Global, unauthenticated search across every organization's roster (public profile browsing). */

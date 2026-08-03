@@ -1,9 +1,10 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { parseCorsOrigins } from './common/cors-origins';
+import { buildSwaggerConfig } from './swagger-config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -13,20 +14,7 @@ async function bootstrap() {
 
   app.use(helmet({ contentSecurityPolicy: false })); // CSP off so Swagger UI assets load
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('CricLive API')
-    .setDescription(
-      'Cricket live scoring platform — auth, organizations, tournaments, ball-by-ball scoring, stats, SaaS plans, CMS. ' +
-        'Authorize with the access_token from POST /auth/login.',
-    )
-    .setVersion('1.0')
-    .addBearerAuth(
-      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', description: 'Paste access_token from /auth/login' },
-      'JWT',
-    )
-    .addSecurityRequirements('JWT')
-    .build();
-  SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, swaggerConfig), {
+  SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, buildSwaggerConfig()), {
     swaggerOptions: { persistAuthorization: true, docExpansion: 'none' },
   });
   app.enableCors({

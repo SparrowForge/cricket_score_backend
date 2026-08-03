@@ -1,0 +1,477 @@
+<title>CricLive — MVP Audit, Top 3</title>
+<style>/* CricLive report tokens (mirrors frontend/src/app/globals.css) — light base,
+   dark applied by OS preference and by the viewer's explicit toggle. */
+:root {
+  --pitch:#eef2f7; --panel:#ffffff; --panel-2:#e8edf5; --line:#d3dce9;
+  --grass:#16a34a; --gold:#b45309; --cherry:#dc2626; --sky:#0284c7;
+  --ink:#0f172a; --mut:#5b6b85; --rule:#c3cfe0;
+  --shadow:0 1px 2px rgba(15,23,42,.06), 0 8px 24px -16px rgba(15,23,42,.25);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pitch:#0b1120; --panel:#131c2e; --panel-2:#1a2540; --line:#24304d;
+    --grass:#22c55e; --gold:#fbbf24; --cherry:#ef4444; --sky:#38bdf8;
+    --ink:#e2e8f0; --mut:#8b9cbe; --rule:#2c3a5c;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -20px rgba(0,0,0,.9);
+  }
+}
+:root[data-theme="dark"] {
+  --pitch:#0b1120; --panel:#131c2e; --panel-2:#1a2540; --line:#24304d;
+  --grass:#22c55e; --gold:#fbbf24; --cherry:#ef4444; --sky:#38bdf8;
+  --ink:#e2e8f0; --mut:#8b9cbe; --rule:#2c3a5c;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -20px rgba(0,0,0,.9);
+}
+:root[data-theme="light"] {
+  --pitch:#eef2f7; --panel:#ffffff; --panel-2:#e8edf5; --line:#d3dce9;
+  --grass:#16a34a; --gold:#b45309; --cherry:#dc2626; --sky:#0284c7;
+  --ink:#0f172a; --mut:#5b6b85; --rule:#c3cfe0;
+  --shadow:0 1px 2px rgba(15,23,42,.06), 0 8px 24px -16px rgba(15,23,42,.25);
+}
+
+:root {
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --serif: ui-serif, Georgia, "Times New Roman", serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--pitch);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0 56px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 24px 96px;
+}
+@media (min-width: 1000px) {
+  .wrap { grid-template-columns: 208px minmax(0, 1fr); }
+}
+
+/* ---------- masthead ---------- */
+header.mast {
+  grid-column: 1 / -1;
+  padding: 72px 0 36px;
+  border-bottom: 3px double var(--rule);
+  margin-bottom: 44px;
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--mut);
+  margin: 0 0 14px;
+}
+h1 {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: clamp(38px, 6vw, 60px);
+  line-height: 1.04;
+  letter-spacing: -.02em;
+  margin: 0 0 16px;
+  text-wrap: balance;
+}
+.standfirst { max-width: 62ch; font-size: 17.5px; color: var(--mut); margin: 0; }
+.mast-meta {
+  display: flex; flex-wrap: wrap; gap: 8px 10px;
+  margin-top: 26px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.chip {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 3px;
+  padding: 4px 9px;
+  color: var(--mut);
+}
+.chip b { color: var(--ink); font-weight: 600; }
+
+/* ---------- contents rail ---------- */
+nav.toc { display: none; }
+@media (min-width: 1000px) {
+  nav.toc { display: block; position: sticky; top: 32px; align-self: start; font-size: 13.5px; }
+}
+nav.toc p {
+  font-family: var(--mono);
+  font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--mut); margin: 0 0 12px;
+}
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+nav.toc a {
+  display: flex; gap: 10px;
+  padding: 5px 0;
+  color: var(--mut);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--ink); }
+nav.toc a:focus-visible { outline: 2px solid var(--sky); outline-offset: 3px; border-radius: 2px; }
+nav.toc .n { font-family: var(--mono); font-size: 11px; color: var(--grass); padding-top: 2px; }
+
+/* ---------- sections ---------- */
+main { min-width: 0; display: grid; gap: 56px; }
+section { scroll-margin-top: 24px; }
+h2 {
+  font-family: var(--serif);
+  font-size: 27px; font-weight: 600; letter-spacing: -.01em;
+  margin: 0 0 6px;
+  display: flex; align-items: baseline; gap: 12px;
+}
+h2 .n { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--grass); letter-spacing: .08em; }
+h3 {
+  font-size: 13px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--mut);
+  margin: 30px 0 10px;
+}
+p { max-width: 68ch; margin: 0 0 14px; }
+.lede { color: var(--mut); max-width: 66ch; margin: 0 0 22px; }
+code {
+  font-family: var(--mono); font-size: .88em;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 3px; padding: 1px 5px;
+}
+
+/* ---------- ledger tables ---------- */
+.ledger { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); box-shadow: var(--shadow); }
+table { border-collapse: collapse; width: 100%; min-width: 460px; font-size: 14.5px; }
+caption {
+  caption-side: top; text-align: left;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--mut);
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--line);
+}
+th, td { padding: 9px 16px; text-align: left; border-bottom: 1px solid var(--line); }
+tbody tr:last-child td { border-bottom: 0; }
+thead th {
+  font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--mut); font-weight: 600;
+  background: var(--panel-2);
+}
+td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pos { color: var(--grass); font-weight: 600; }
+.neg { color: var(--cherry); font-weight: 600; }
+.bonus { color: var(--gold); font-weight: 600; }
+td .sub { display: block; color: var(--mut); font-size: 12.5px; }
+
+/* ---------- worked example: a scorer's column ---------- */
+.calc { display: grid; gap: 18px; }
+@media (min-width: 860px) { .calc { grid-template-columns: 1fr 1fr; } }
+.strip {
+  border: 1px solid var(--line); border-radius: 4px;
+  background: var(--panel); box-shadow: var(--shadow);
+  padding: 16px 18px 14px;
+}
+.strip h4 { font-family: var(--serif); font-size: 16px; font-weight: 600; margin: 0 0 2px; }
+.strip .cond { font-family: var(--mono); font-size: 11.5px; color: var(--mut); margin: 0 0 14px; }
+.sh { margin-bottom: 12px; }
+.rows { display: grid; gap: 0; font-size: 14px; }
+.row { display: grid; grid-template-columns: 1fr auto; gap: 14px; padding: 6px 0; border-bottom: 1px dotted var(--rule); }
+.row span:last-child { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+.row .work { display: block; color: var(--mut); font-size: 12.5px; font-weight: 400; }
+.total {
+  display: grid; grid-template-columns: 1fr auto; gap: 14px;
+  margin-top: 8px; padding-top: 9px;
+  border-top: 3px double var(--rule);
+  font-weight: 700;
+}
+.total span:last-child { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 17px; }
+.total .work { display: block; color: var(--mut); font-size: 12px; font-weight: 400; font-family: var(--mono); }
+
+.zero { color: var(--mut); }
+.mult { color: var(--sky); font-weight: 600; }
+.wl { color: var(--grass); font-weight: 700; }
+.pm { color: var(--gold); font-weight: 700; }
+.rec { font-family: var(--mono); font-size: 11px; margin: 10px 0 0; color: var(--mut); }
+.rec.okk::before { content: "\2713 "; color: var(--grass); }
+.rec.bad { color: var(--cherry); font-weight: 700; }
+.strong { font-weight: 700; }
+tfoot td { border-top: 3px double var(--rule); font-weight: 700; }
+
+footer {
+  grid-column: 1 / -1;
+  margin-top: 72px; padding-top: 20px;
+  border-top: 1px solid var(--line);
+  font-size: 13px; color: var(--mut);
+  display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: space-between;
+}
+footer code { background: transparent; border: 0; padding: 0; }
+</style>
+<div class="wrap">
+  <header class="mast">
+    <p class="eyebrow">CricLive · MVP audit</p>
+    <h1>Top three, match by match</h1>
+    <p class="standfirst">Every match total rebuilt independently from ball-by-ball data using the
+      current scoring rules, then reconciled against the figure stored in the database.
+      Recalculated after the contribution-point and milestone revision.</p>
+    <div class="mast-meta">
+      <span class="chip">Players <b>3</b></span>
+      <span class="chip">Player-matches audited <b>43</b></span>
+      <span class="chip">Mismatches <b style="color:var(--grass)">0</b></span>
+      <span class="chip">Generated <b>2026-08-03</b></span>
+    </div>
+  </header>
+  <nav class="toc" aria-label="Contents"><p>Players</p><ol><li><a href="#p1"><span class="n">1</span> Omar Faruk</a></li><li><a href="#p2"><span class="n">2</span> Shakib Sarar Arnab</a></li><li><a href="#p3"><span class="n">3</span> Rakibul Hasan</a></li></ol></nav>
+  <main><section id="p1">
+      <h2><span class="n">01</span> Omar Faruk</h2>
+      <p class="lede">15 completed matches · career MVP <b>366.30</b></p>
+      <div class="ledger"><table><caption>Match by match</caption>
+        <thead><tr><th>Date</th><th>Match</th><th class="num">Bat</th><th class="num">Bowl</th><th class="num">Field</th><th class="num">Mult</th><th class="num">Total</th></tr></thead>
+        <tbody><tr><td>2026-07-12</td><td>HT v NT</td><td class="num">5.73</td><td class="num">10.73</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">16.45</td></tr><tr><td>2026-07-12</td><td>HT v NT</td><td class="num">24.07</td><td class="num">9.30</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">33.37</td></tr><tr><td>2026-07-14</td><td>PR v GO</td><td class="num">5.05</td><td class="num">10.43</td><td class="num">6.00</td><td class="num">—</td><td class="num strong">21.49</td></tr><tr><td>2026-07-14</td><td>PR v GO</td><td class="num">27.47</td><td class="num">16.24</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">43.72</td></tr><tr><td>2026-07-14</td><td>PR v GO</td><td class="num">1.58</td><td class="num">20.02</td><td class="num">13.20</td><td class="num">×1.1</td><td class="num strong">38.09</td></tr><tr><td>2026-07-16</td><td>TB v TA</td><td class="num">0.00</td><td class="num">17.51</td><td class="num">6.60</td><td class="num">×1.1</td><td class="num strong">24.11</td></tr><tr><td>2026-07-16</td><td>TA v TB</td><td class="num">-1.72</td><td class="num">0.56</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">-1.16</td></tr><tr><td>2026-07-26</td><td>ST v LR</td><td class="num">-1.33</td><td class="num">-1.25</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">-2.58</td></tr><tr><td>2026-07-26</td><td>ST v LR</td><td class="num">-1.18</td><td class="num">2.70</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">1.53</td></tr><tr><td>2026-07-28</td><td>AR v BR</td><td class="num">41.77</td><td class="num">6.45</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">48.22</td></tr><tr><td>2026-07-28</td><td>AR v BR</td><td class="num">-0.29</td><td class="num">15.35</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">15.06</td></tr><tr><td>2026-07-30</td><td>ME v MO</td><td class="num">19.24</td><td class="num">31.04</td><td class="num">6.00</td><td class="num">—</td><td class="num strong">56.28</td></tr><tr><td>2026-07-30</td><td>ME v MO</td><td class="num">0.00</td><td class="num">25.33</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">25.33</td></tr><tr><td>2026-07-30</td><td>MO v ME</td><td class="num">0.00</td><td class="num">2.20</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">2.20</td></tr><tr><td>2026-08-02</td><td>TU v TA</td><td class="num">26.11</td><td class="num">18.08</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">44.19</td></tr></tbody>
+        <tfoot><tr><td colspan="6">Career total</td><td class="num strong">366.30</td></tr></tfoot>
+      </table></div>
+      <h3>Term by term</h3>
+      <div class="calc"><article class="strip">
+        <header class="sh"><h4>HT v NT</h4><p class="cond">2026-07-12 · 4 ov · match RR 5.50 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">4 scored</span></span><span class="pos">4.00</span></div><div class="row"><span>Fours<span class="work">1 × 0.5</span></span><span class="pos">0.50</span></div><div class="row"><span>Milestone<span class="work">4 of 6 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">4 vs 4.58 par off 5b</span></span><span class="neg">-0.29</span></div><div class="row"><span>Contribution<span class="work">4 ÷ 4 ov</span></span><span class="pos">1.00</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">11 × 0.25</span></span><span class="pos">2.75</span></div><div class="row"><span>Maidens<span class="work">1 × 4</span></span><span class="pos">4.00</span></div><div class="row"><span>Economy<span class="work">5 vs 11.00 par off 12b</span></span><span class="pos">3.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(5.21 + 9.75 + 0.00) × 1.1</span></span><span>16.45</span></div>
+        <p class="rec okk">stored 16.45 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>HT v NT</h4><p class="cond">2026-07-12 · 3 ov · match RR 3.60</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">8 scored</span></span><span class="pos">8.00</span></div><div class="row"><span>Fours<span class="work">2 × 0.5</span></span><span class="pos">1.00</span></div><div class="row"><span>Milestone<span class="work">8 ≥ 7.5 needed</span></span><span class="bonus">12.00</span></div><div class="row"><span>Rate<span class="work">8 vs 7.20 par off 12b</span></span><span class="pos">0.40</span></div><div class="row"><span>Contribution<span class="work">8 ÷ 3 ov</span></span><span class="pos">2.67</span></div><div class="row"><span>Wickets<span class="work">1 × 6</span></span><span class="pos">6.00</span></div><div class="row"><span>Dots<span class="work">8 × 0.25</span></span><span class="pos">2.00</span></div><div class="row"><span>Maidens<span class="work">1 × 4</span></span><span class="pos">4.00</span></div><div class="row"><span>Economy<span class="work">12 vs 6.60 par off 11b</span></span><span class="neg">-2.70</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(24.07 + 9.30 + 0.00) × 1.0</span></span><span>33.37</span></div>
+        <p class="rec okk">stored 33.37 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>PR v GO</h4><p class="cond">2026-07-14 · 4 ov · match RR 5.87</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">4 scored</span></span><span class="pos">4.00</span></div><div class="row"><span>Fours<span class="work">1 × 0.5</span></span><span class="pos">0.50</span></div><div class="row"><span>Milestone<span class="work">4 of 6 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">4 vs 4.89 par off 5b</span></span><span class="neg">-0.45</span></div><div class="row"><span>Contribution<span class="work">4 ÷ 4 ov</span></span><span class="pos">1.00</span></div><div class="row"><span>Wickets<span class="work">1 × 6</span></span><span class="pos">6.00</span></div><div class="row"><span>Dots<span class="work">6 × 0.25</span></span><span class="pos">1.50</span></div><div class="row"><span>Economy<span class="work">0 vs 5.87 par off 6b</span></span><span class="pos">2.93</span></div><div class="row"><span>Fielding<span class="work">1c</span></span><span class="pos">6.00</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(5.05 + 10.43 + 6.00) × 1.0</span></span><span>21.49</span></div>
+        <p class="rec okk">stored 21.49 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>PR v GO</h4><p class="cond">2026-07-14 · 6 ov · match RR 4.94 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">12 scored</span></span><span class="pos">12.00</span></div><div class="row"><span>Fours<span class="work">3 × 0.5</span></span><span class="pos">1.50</span></div><div class="row"><span>Milestone<span class="work">12 ≥ 12 needed</span></span><span class="bonus">8.00</span></div><div class="row"><span>Rate<span class="work">12 vs 9.05 par off 11b</span></span><span class="pos">1.48</span></div><div class="row"><span>Contribution<span class="work">12 ÷ 6 ov</span></span><span class="pos">2.00</span></div><div class="row"><span>Wickets<span class="work">1 × 6</span></span><span class="pos">6.00</span></div><div class="row"><span>Dots<span class="work">6 × 0.25</span></span><span class="pos">1.50</span></div><div class="row"><span>Maidens<span class="work">1 × 4</span></span><span class="pos">4.00</span></div><div class="row"><span>Economy<span class="work">0 vs 4.94 par off 6b</span></span><span class="pos">2.47</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">0.80</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(24.98 + 14.77 + 0.00) × 1.1</span></span><span>43.72</span></div>
+        <p class="rec okk">stored 43.72 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>PR v GO</h4><p class="cond">2026-07-14 · 2 ov · match RR 3.39 · <b class="wl">won</b> · <b class="pm">player of the match</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">1 scored</span></span><span class="pos">1.00</span></div><div class="row"><span>Milestone<span class="work">1 of 3 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">1 vs 1.13 par off 2b</span></span><span class="neg">-0.07</span></div><div class="row"><span>Contribution<span class="work">1 ÷ 2 ov</span></span><span class="pos">0.50</span></div><div class="row"><span>Wickets<span class="work">2 × 6</span></span><span class="pos">12.00</span></div><div class="row"><span>Dots<span class="work">6 × 0.25</span></span><span class="pos">1.50</span></div><div class="row"><span>Haul<span class="work">2 wickets</span></span><span class="bonus">3.00</span></div><div class="row"><span>Economy<span class="work">0 vs 3.39 par off 6b</span></span><span class="pos">1.70</span></div><div class="row"><span>Fielding<span class="work">2c</span></span><span class="pos">12.00</span></div><div class="row"><span>Player of the match<span class="work">flat</span></span><span class="bonus">3.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(1.43 + 18.20 + 12.00) × 1.1 + 3</span></span><span>38.09</span></div>
+        <p class="rec okk">stored 38.09 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>TB v TA</h4><p class="cond">2026-07-16 · 8 ov · match RR 5.57 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Wickets<span class="work">2 × 6</span></span><span class="pos">12.00</span></div><div class="row"><span>Dots<span class="work">7 × 0.25</span></span><span class="pos">1.75</span></div><div class="row"><span>Haul<span class="work">2 wickets</span></span><span class="bonus">3.00</span></div><div class="row"><span>Economy<span class="work">16 vs 11.13 par off 12b</span></span><span class="neg">-2.43</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">1.60</span></div><div class="row"><span>Fielding<span class="work">1c</span></span><span class="pos">6.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(0.00 + 15.92 + 6.00) × 1.1</span></span><span>24.11</span></div>
+        <p class="rec okk">stored 24.11 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>TA v TB</h4><p class="cond">2026-07-16 · 8 ov · match RR 4.13</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 12 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 3.44 par off 5b</span></span><span class="neg">-1.72</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 8 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">4 × 0.25</span></span><span class="pos">1.00</span></div><div class="row"><span>Economy<span class="work">5 vs 4.13 par off 6b</span></span><span class="neg">-0.44</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-1.72 + 0.56 + 0.00) × 1.0</span></span><span>-1.16</span></div>
+        <p class="rec okk">stored -1.16 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>ST v LR</h4><p class="cond">2026-07-26 · 6 ov · match RR 8.00</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 9 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 2.67 par off 2b</span></span><span class="neg">-1.33</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 6 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">3 × 0.25</span></span><span class="pos">0.75</span></div><div class="row"><span>Economy<span class="work">12 vs 8.00 par off 6b</span></span><span class="neg">-2.00</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-1.33 + -1.25 + 0.00) × 1.0</span></span><span>-2.58</span></div>
+        <p class="rec okk">stored -2.58 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>ST v LR</h4><p class="cond">2026-07-26 · 6 ov · match RR 6.42 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 9 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 2.14 par off 2b</span></span><span class="neg">-1.07</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 6 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">5 × 0.25</span></span><span class="pos">1.25</span></div><div class="row"><span>Economy<span class="work">4 vs 6.42 par off 6b</span></span><span class="pos">1.21</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-1.07 + 2.46 + 0.00) × 1.1</span></span><span>1.53</span></div>
+        <p class="rec okk">stored 1.53 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>AR v BR</h4><p class="cond">2026-07-28 · 6 ov · match RR 5.34</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">18 scored</span></span><span class="pos">18.00</span></div><div class="row"><span>Fours<span class="work">4 × 0.5</span></span><span class="pos">2.00</span></div><div class="row"><span>Milestone<span class="work">18 ≥ 18 needed</span></span><span class="bonus">16.00</span></div><div class="row"><span>Rate<span class="work">18 vs 12.47 par off 14b</span></span><span class="pos">2.77</span></div><div class="row"><span>Contribution<span class="work">18 ÷ 6 ov</span></span><span class="pos">3.00</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">8 × 0.25</span></span><span class="pos">2.00</span></div><div class="row"><span>Maidens<span class="work">1 × 4</span></span><span class="pos">4.00</span></div><div class="row"><span>Economy<span class="work">8 vs 8.91 par off 10b</span></span><span class="pos">0.45</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(41.77 + 6.45 + 0.00) × 1.0</span></span><span>48.22</span></div>
+        <p class="rec okk">stored 48.22 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>AR v BR</h4><p class="cond">2026-07-28 · 6 ov · match RR 3.50</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 9 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 0.58 par off 1b</span></span><span class="neg">-0.29</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 6 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Wickets<span class="work">2 × 6</span></span><span class="pos">12.00</span></div><div class="row"><span>Dots<span class="work">4 × 0.25</span></span><span class="pos">1.00</span></div><div class="row"><span>Haul<span class="work">2 wickets</span></span><span class="bonus">3.00</span></div><div class="row"><span>Economy<span class="work">8 vs 3.50 par off 6b</span></span><span class="neg">-2.25</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">1.60</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-0.29 + 15.35 + 0.00) × 1.0</span></span><span>15.06</span></div>
+        <p class="rec okk">stored 15.06 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>ME v MO</h4><p class="cond">2026-07-30 · 8 ov · match RR 5.69</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">14 scored</span></span><span class="pos">14.00</span></div><div class="row"><span>Fours<span class="work">3 × 0.5</span></span><span class="pos">1.50</span></div><div class="row"><span>Milestone<span class="work">14 ≥ 12 needed</span></span><span class="bonus">4.00</span></div><div class="row"><span>Rate<span class="work">14 vs 18.01 par off 19b</span></span><span class="neg">-2.01</span></div><div class="row"><span>Contribution<span class="work">14 ÷ 8 ov</span></span><span class="pos">1.75</span></div><div class="row"><span>Wickets<span class="work">3 × 6</span></span><span class="pos">18.00</span></div><div class="row"><span>Dots<span class="work">11 × 0.25</span></span><span class="pos">2.75</span></div><div class="row"><span>Haul<span class="work">3 wickets</span></span><span class="bonus">6.00</span></div><div class="row"><span>Economy<span class="work">6 vs 11.38 par off 12b</span></span><span class="pos">2.69</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">1.60</span></div><div class="row"><span>Fielding<span class="work">1c</span></span><span class="pos">6.00</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(19.24 + 31.04 + 6.00) × 1.0</span></span><span>56.28</span></div>
+        <p class="rec okk">stored 56.28 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>ME v MO</h4><p class="cond">2026-07-30 · 8 ov · match RR 3.45 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Wickets<span class="work">2 × 6</span></span><span class="pos">12.00</span></div><div class="row"><span>Dots<span class="work">6 × 0.25</span></span><span class="pos">1.50</span></div><div class="row"><span>Maidens<span class="work">1 × 4</span></span><span class="pos">4.00</span></div><div class="row"><span>Haul<span class="work">2 wickets</span></span><span class="bonus">3.00</span></div><div class="row"><span>Economy<span class="work">0 vs 3.45 par off 6b</span></span><span class="pos">1.73</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">0.80</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(0.00 + 23.03 + 0.00) × 1.1</span></span><span>25.33</span></div>
+        <p class="rec okk">stored 25.33 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>MO v ME</h4><p class="cond">2026-07-30 · 3 ov · match RR 4.00 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">4 × 0.25</span></span><span class="pos">1.00</span></div><div class="row"><span>Economy<span class="work">2 vs 4.00 par off 6b</span></span><span class="pos">1.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(0.00 + 2.00 + 0.00) × 1.1</span></span><span>2.20</span></div>
+        <p class="rec okk">stored 2.20 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>TU v TA</h4><p class="cond">2026-08-02 · 6 ov · match RR 4.33</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">13 scored</span></span><span class="pos">13.00</span></div><div class="row"><span>Fours<span class="work">3 × 0.5</span></span><span class="pos">1.50</span></div><div class="row"><span>Milestone<span class="work">13 ≥ 12 needed</span></span><span class="bonus">8.00</span></div><div class="row"><span>Rate<span class="work">13 vs 10.11 par off 14b</span></span><span class="pos">1.44</span></div><div class="row"><span>Contribution<span class="work">13 ÷ 6 ov</span></span><span class="pos">2.17</span></div><div class="row"><span>Wickets<span class="work">2 × 6</span></span><span class="pos">12.00</span></div><div class="row"><span>Dots<span class="work">9 × 0.25</span></span><span class="pos">2.25</span></div><div class="row"><span>Haul<span class="work">2 wickets</span></span><span class="bonus">3.00</span></div><div class="row"><span>Economy<span class="work">7 vs 8.67 par off 12b</span></span><span class="pos">0.83</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(26.11 + 18.08 + 0.00) × 1.0</span></span><span>44.19</span></div>
+        <p class="rec okk">stored 44.19 · reconciles</p>
+      </article></div>
+    </section><section id="p2">
+      <h2><span class="n">02</span> Shakib Sarar Arnab</h2>
+      <p class="lede">15 completed matches · career MVP <b>348.26</b></p>
+      <div class="ledger"><table><caption>Match by match</caption>
+        <thead><tr><th>Date</th><th>Match</th><th class="num">Bat</th><th class="num">Bowl</th><th class="num">Field</th><th class="num">Mult</th><th class="num">Total</th></tr></thead>
+        <tbody><tr><td>2026-07-12</td><td>HT v NT</td><td class="num">2.92</td><td class="num">10.55</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">13.47</td></tr><tr><td>2026-07-12</td><td>HT v NT</td><td class="num">-1.32</td><td class="num">1.76</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">0.44</td></tr><tr><td>2026-07-14</td><td>PR v GO</td><td class="num">48.22</td><td class="num">9.33</td><td class="num">6.60</td><td class="num">×1.1</td><td class="num strong">67.45</td></tr><tr><td>2026-07-14</td><td>PR v GO</td><td class="num">11.45</td><td class="num">18.09</td><td class="num">6.00</td><td class="num">—</td><td class="num strong">35.54</td></tr><tr><td>2026-07-14</td><td>PR v GO</td><td class="num">-0.28</td><td class="num">0.20</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">-0.09</td></tr><tr><td>2026-07-16</td><td>TB v TA</td><td class="num">1.03</td><td class="num">11.35</td><td class="num">13.20</td><td class="num">×1.1</td><td class="num strong">25.58</td></tr><tr><td>2026-07-16</td><td>TA v TB</td><td class="num">-3.44</td><td class="num">-2.62</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">-6.06</td></tr><tr><td>2026-07-26</td><td>ST v LR</td><td class="num">21.63</td><td class="num">7.70</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">32.63</td></tr><tr><td>2026-07-26</td><td>ST v LR</td><td class="num">45.01</td><td class="num">10.32</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">55.32</td></tr><tr><td>2026-07-28</td><td>AR v BR</td><td class="num">10.93</td><td class="num">11.71</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">22.64</td></tr><tr><td>2026-07-28</td><td>AR v BR</td><td class="num">-0.64</td><td class="num">2.75</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">2.11</td></tr><tr><td>2026-07-30</td><td>ME v MO</td><td class="num">45.67</td><td class="num">13.74</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">62.70</td></tr><tr><td>2026-07-30</td><td>ME v MO</td><td class="num">-0.86</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">-0.86</td></tr><tr><td>2026-07-30</td><td>MO v ME</td><td class="num">-0.67</td><td class="num">0.75</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">0.08</td></tr><tr><td>2026-08-02</td><td>TU v TA</td><td class="num">16.04</td><td class="num">9.17</td><td class="num">8.80</td><td class="num">×1.1</td><td class="num strong">37.31</td></tr></tbody>
+        <tfoot><tr><td colspan="6">Career total</td><td class="num strong">348.26</td></tr></tfoot>
+      </table></div>
+      <h3>Term by term</h3>
+      <div class="calc"><article class="strip">
+        <header class="sh"><h4>HT v NT</h4><p class="cond">2026-07-12 · 4 ov · match RR 5.50</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">4 scored</span></span><span class="pos">4.00</span></div><div class="row"><span>Fours<span class="work">1 × 0.5</span></span><span class="pos">0.50</span></div><div class="row"><span>Milestone<span class="work">4 of 6 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">4 vs 9.17 par off 10b</span></span><span class="neg">-2.58</span></div><div class="row"><span>Contribution<span class="work">4 ÷ 4 ov</span></span><span class="pos">1.00</span></div><div class="row"><span>Wickets<span class="work">1 × 6</span></span><span class="pos">6.00</span></div><div class="row"><span>Dots<span class="work">6 × 0.25</span></span><span class="pos">1.50</span></div><div class="row"><span>Economy<span class="work">1 vs 5.50 par off 6b</span></span><span class="pos">2.25</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">0.80</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(2.92 + 10.55 + 0.00) × 1.0</span></span><span>13.47</span></div>
+        <p class="rec okk">stored 13.47 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>HT v NT</h4><p class="cond">2026-07-12 · 3 ov · match RR 3.60 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 4.5 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 2.40 par off 4b</span></span><span class="neg">-1.20</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 3 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">10 × 0.25</span></span><span class="pos">2.50</span></div><div class="row"><span>Economy<span class="work">9 vs 7.20 par off 12b</span></span><span class="neg">-0.90</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-1.20 + 1.60 + 0.00) × 1.1</span></span><span>0.44</span></div>
+        <p class="rec okk">stored 0.44 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>PR v GO</h4><p class="cond">2026-07-14 · 4 ov · match RR 5.87 · <b class="wl">won</b> · <b class="pm">player of the match</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">17 scored</span></span><span class="pos">17.00</span></div><div class="row"><span>Fours<span class="work">4 × 0.5</span></span><span class="pos">2.00</span></div><div class="row"><span>Milestone<span class="work">17 ≥ 12 needed</span></span><span class="bonus">16.00</span></div><div class="row"><span>Rate<span class="work">17 vs 7.83 par off 8b</span></span><span class="pos">4.59</span></div><div class="row"><span>Contribution<span class="work">17 ÷ 4 ov</span></span><span class="pos">4.25</span></div><div class="row"><span>Wickets<span class="work">1 × 6</span></span><span class="pos">6.00</span></div><div class="row"><span>Dots<span class="work">5 × 0.25</span></span><span class="pos">1.25</span></div><div class="row"><span>Economy<span class="work">5 vs 5.87 par off 6b</span></span><span class="pos">0.43</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">0.80</span></div><div class="row"><span>Fielding<span class="work">1c</span></span><span class="pos">6.00</span></div><div class="row"><span>Player of the match<span class="work">flat</span></span><span class="bonus">3.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(43.84 + 8.48 + 6.00) × 1.1 + 3</span></span><span>67.45</span></div>
+        <p class="rec okk">stored 67.45 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>PR v GO</h4><p class="cond">2026-07-14 · 6 ov · match RR 4.94</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">8 scored</span></span><span class="pos">8.00</span></div><div class="row"><span>Fours<span class="work">2 × 0.5</span></span><span class="pos">1.00</span></div><div class="row"><span>Milestone<span class="work">8 of 9 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">8 vs 5.76 par off 7b</span></span><span class="pos">1.12</span></div><div class="row"><span>Contribution<span class="work">8 ÷ 6 ov</span></span><span class="pos">1.33</span></div><div class="row"><span>Wickets<span class="work">2 × 6</span></span><span class="pos">12.00</span></div><div class="row"><span>Dots<span class="work">9 × 0.25</span></span><span class="pos">2.25</span></div><div class="row"><span>Haul<span class="work">2 wickets</span></span><span class="bonus">3.00</span></div><div class="row"><span>Economy<span class="work">13 vs 9.87 par off 12b</span></span><span class="neg">-1.56</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">2.40</span></div><div class="row"><span>Fielding<span class="work">1c</span></span><span class="pos">6.00</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(11.45 + 18.09 + 6.00) × 1.0</span></span><span>35.54</span></div>
+        <p class="rec okk">stored 35.54 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>PR v GO</h4><p class="cond">2026-07-14 · 2 ov · match RR 3.39</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 3 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 0.57 par off 1b</span></span><span class="neg">-0.28</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 2 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">4 × 0.25</span></span><span class="pos">1.00</span></div><div class="row"><span>Economy<span class="work">5 vs 3.39 par off 6b</span></span><span class="neg">-0.80</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-0.28 + 0.20 + 0.00) × 1.0</span></span><span>-0.09</span></div>
+        <p class="rec okk">stored -0.09 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>TB v TA</h4><p class="cond">2026-07-16 · 8 ov · match RR 5.57 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">4 scored</span></span><span class="pos">4.00</span></div><div class="row"><span>Milestone<span class="work">4 of 12 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">4 vs 11.13 par off 12b</span></span><span class="neg">-3.57</span></div><div class="row"><span>Contribution<span class="work">4 ÷ 8 ov</span></span><span class="pos">0.50</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">11 × 0.25</span></span><span class="pos">2.75</span></div><div class="row"><span>Maidens<span class="work">1 × 4</span></span><span class="pos">4.00</span></div><div class="row"><span>Economy<span class="work">4 vs 11.13 par off 12b</span></span><span class="pos">3.57</span></div><div class="row"><span>Fielding<span class="work">2c</span></span><span class="pos">12.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(0.93 + 10.32 + 12.00) × 1.1</span></span><span>25.58</span></div>
+        <p class="rec okk">stored 25.58 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>TA v TB</h4><p class="cond">2026-07-16 · 8 ov · match RR 4.13</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 12 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 6.88 par off 10b</span></span><span class="neg">-3.44</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 8 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">5 × 0.25</span></span><span class="pos">1.25</span></div><div class="row"><span>Economy<span class="work">16 vs 8.26 par off 12b</span></span><span class="neg">-3.87</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-3.44 + -2.62 + 0.00) × 1.0</span></span><span>-6.06</span></div>
+        <p class="rec okk">stored -6.06 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>ST v LR</h4><p class="cond">2026-07-26 · 6 ov · match RR 8.00 · <b class="wl">won</b> · <b class="pm">player of the match</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">10 scored</span></span><span class="pos">10.00</span></div><div class="row"><span>Fours<span class="work">2 × 0.5</span></span><span class="pos">1.00</span></div><div class="row"><span>Milestone<span class="work">10 ≥ 9 needed</span></span><span class="bonus">4.00</span></div><div class="row"><span>Rate<span class="work">10 vs 4.00 par off 3b</span></span><span class="pos">3.00</span></div><div class="row"><span>Contribution<span class="work">10 ÷ 6 ov</span></span><span class="pos">1.67</span></div><div class="row"><span>Wickets<span class="work">1 × 6</span></span><span class="pos">6.00</span></div><div class="row"><span>Dots<span class="work">4 × 0.25</span></span><span class="pos">1.00</span></div><div class="row"><span>Economy<span class="work">8 vs 8.00 par off 6b</span></span><span class="pos">0.00</span></div><div class="row"><span>Player of the match<span class="work">flat</span></span><span class="bonus">3.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(19.67 + 7.00 + 0.00) × 1.1 + 3</span></span><span>32.63</span></div>
+        <p class="rec okk">stored 32.63 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>ST v LR</h4><p class="cond">2026-07-26 · 6 ov · match RR 6.42</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">22 scored</span></span><span class="pos">22.00</span></div><div class="row"><span>Fours<span class="work">5 × 0.5</span></span><span class="pos">2.50</span></div><div class="row"><span>Milestone<span class="work">22 ≥ 18 needed</span></span><span class="bonus">16.00</span></div><div class="row"><span>Rate<span class="work">22 vs 20.32 par off 19b</span></span><span class="pos">0.84</span></div><div class="row"><span>Contribution<span class="work">22 ÷ 6 ov</span></span><span class="pos">3.67</span></div><div class="row"><span>Wickets<span class="work">1 × 6</span></span><span class="pos">6.00</span></div><div class="row"><span>Dots<span class="work">8 × 0.25</span></span><span class="pos">2.00</span></div><div class="row"><span>Economy<span class="work">11 vs 12.83 par off 12b</span></span><span class="pos">0.92</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">1.40</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(45.01 + 10.32 + 0.00) × 1.0</span></span><span>55.32</span></div>
+        <p class="rec okk">stored 55.32 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>AR v BR</h4><p class="cond">2026-07-28 · 6 ov · match RR 5.34 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">7 scored</span></span><span class="pos">7.00</span></div><div class="row"><span>Fours<span class="work">1 × 0.5</span></span><span class="pos">0.50</span></div><div class="row"><span>Milestone<span class="work">7 of 9 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">7 vs 4.45 par off 5b</span></span><span class="pos">1.27</span></div><div class="row"><span>Contribution<span class="work">7 ÷ 6 ov</span></span><span class="pos">1.17</span></div><div class="row"><span>Wickets<span class="work">1 × 6</span></span><span class="pos">6.00</span></div><div class="row"><span>Dots<span class="work">10 × 0.25</span></span><span class="pos">2.50</span></div><div class="row"><span>Economy<span class="work">8 vs 10.69 par off 12b</span></span><span class="pos">1.34</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">0.80</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(9.94 + 10.64 + 0.00) × 1.1</span></span><span>22.64</span></div>
+        <p class="rec okk">stored 22.64 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>AR v BR</h4><p class="cond">2026-07-28 · 6 ov · match RR 3.50 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 9 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 1.17 par off 2b</span></span><span class="neg">-0.58</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 6 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">5 × 0.25</span></span><span class="pos">1.25</span></div><div class="row"><span>Economy<span class="work">1 vs 3.50 par off 6b</span></span><span class="pos">1.25</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-0.58 + 2.50 + 0.00) × 1.1</span></span><span>2.11</span></div>
+        <p class="rec okk">stored 2.11 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>ME v MO</h4><p class="cond">2026-07-30 · 8 ov · match RR 5.69 · <b class="wl">won</b> · <b class="pm">player of the match</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">21 scored</span></span><span class="pos">21.00</span></div><div class="row"><span>Fours<span class="work">5 × 0.5</span></span><span class="pos">2.50</span></div><div class="row"><span>Milestone<span class="work">21 ≥ 20 needed</span></span><span class="bonus">12.00</span></div><div class="row"><span>Rate<span class="work">21 vs 14.22 par off 15b</span></span><span class="pos">3.39</span></div><div class="row"><span>Contribution<span class="work">21 ÷ 8 ov</span></span><span class="pos">2.63</span></div><div class="row"><span>Wickets<span class="work">1 × 6</span></span><span class="pos">6.00</span></div><div class="row"><span>Dots<span class="work">10 × 0.25</span></span><span class="pos">2.50</span></div><div class="row"><span>Economy<span class="work">9 vs 11.38 par off 12b</span></span><span class="pos">1.19</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">2.80</span></div><div class="row"><span>Player of the match<span class="work">flat</span></span><span class="bonus">3.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(41.52 + 12.49 + 0.00) × 1.1 + 3</span></span><span>62.70</span></div>
+        <p class="rec okk">stored 62.70 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>ME v MO</h4><p class="cond">2026-07-30 · 8 ov · match RR 3.45</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 12 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 1.73 par off 3b</span></span><span class="neg">-0.86</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 8 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-0.86 + 0.00 + 0.00) × 1.0</span></span><span>-0.86</span></div>
+        <p class="rec okk">stored -0.86 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>MO v ME</h4><p class="cond">2026-07-30 · 3 ov · match RR 4.00</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 4.5 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 1.33 par off 2b</span></span><span class="neg">-0.67</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 3 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">5 × 0.25</span></span><span class="pos">1.25</span></div><div class="row"><span>Economy<span class="work">5 vs 4.00 par off 6b</span></span><span class="neg">-0.50</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-0.67 + 0.75 + 0.00) × 1.0</span></span><span>0.08</span></div>
+        <p class="rec okk">stored 0.08 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>TU v TA</h4><p class="cond">2026-08-02 · 6 ov · match RR 4.33 · <b class="wl">won</b> · <b class="pm">player of the match</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">9 scored</span></span><span class="pos">9.00</span></div><div class="row"><span>Fours<span class="work">2 × 0.5</span></span><span class="pos">1.00</span></div><div class="row"><span>Milestone<span class="work">9 ≥ 9 needed</span></span><span class="bonus">4.00</span></div><div class="row"><span>Rate<span class="work">9 vs 10.83 par off 15b</span></span><span class="neg">-0.92</span></div><div class="row"><span>Contribution<span class="work">9 ÷ 6 ov</span></span><span class="pos">1.50</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">10 × 0.25</span></span><span class="pos">2.50</span></div><div class="row"><span>Maidens<span class="work">1 × 4</span></span><span class="pos">4.00</span></div><div class="row"><span>Economy<span class="work">5 vs 8.67 par off 12b</span></span><span class="pos">1.83</span></div><div class="row"><span>Fielding<span class="work">1ro</span></span><span class="pos">8.00</span></div><div class="row"><span>Player of the match<span class="work">flat</span></span><span class="bonus">3.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(14.58 + 8.33 + 8.00) × 1.1 + 3</span></span><span>37.31</span></div>
+        <p class="rec okk">stored 37.31 · reconciles</p>
+      </article></div>
+    </section><section id="p3">
+      <h2><span class="n">03</span> Rakibul Hasan</h2>
+      <p class="lede">13 completed matches · career MVP <b>283.06</b></p>
+      <div class="ledger"><table><caption>Match by match</caption>
+        <thead><tr><th>Date</th><th>Match</th><th class="num">Bat</th><th class="num">Bowl</th><th class="num">Field</th><th class="num">Mult</th><th class="num">Total</th></tr></thead>
+        <tbody><tr><td>2026-07-12</td><td>HT v NT</td><td class="num">37.81</td><td class="num">5.94</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">47.05</td></tr><tr><td>2026-07-12</td><td>HT v NT</td><td class="num">-0.90</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">-0.90</td></tr><tr><td>2026-07-14</td><td>PR v GO</td><td class="num">-1.61</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">-1.61</td></tr><tr><td>2026-07-14</td><td>PR v GO</td><td class="num">-0.41</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">-0.41</td></tr><tr><td>2026-07-14</td><td>PR v GO</td><td class="num">-0.57</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">-0.57</td></tr><tr><td>2026-07-16</td><td>TB v TA</td><td class="num">72.28</td><td class="num">0.00</td><td class="num">6.60</td><td class="num">×1.1</td><td class="num strong">82.18</td></tr><tr><td>2026-07-16</td><td>TA v TB</td><td class="num">24.81</td><td class="num">9.56</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">34.37</td></tr><tr><td>2026-07-26</td><td>ST v LR</td><td class="num">19.43</td><td class="num">2.75</td><td class="num">8.80</td><td class="num">×1.1</td><td class="num strong">30.98</td></tr><tr><td>2026-07-26</td><td>ST v LR</td><td class="num">-1.60</td><td class="num">6.42</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">4.81</td></tr><tr><td>2026-07-28</td><td>AR v BR</td><td class="num">50.65</td><td class="num">1.01</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">51.66</td></tr><tr><td>2026-07-28</td><td>AR v BR</td><td class="num">-0.96</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">×1.1</td><td class="num strong">-0.96</td></tr><tr><td>2026-07-30</td><td>ME v MO</td><td class="num">35.83</td><td class="num">-0.31</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">35.52</td></tr><tr><td>2026-08-02</td><td>TU v TA</td><td class="num">-2.89</td><td class="num">3.83</td><td class="num">0.00</td><td class="num">—</td><td class="num strong">0.94</td></tr></tbody>
+        <tfoot><tr><td colspan="6">Career total</td><td class="num strong">283.06</td></tr></tfoot>
+      </table></div>
+      <h3>Term by term</h3>
+      <div class="calc"><article class="strip">
+        <header class="sh"><h4>HT v NT</h4><p class="cond">2026-07-12 · 4 ov · match RR 5.50 · <b class="wl">won</b> · <b class="pm">player of the match</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">12 scored</span></span><span class="pos">12.00</span></div><div class="row"><span>Fours<span class="work">3 × 0.5</span></span><span class="pos">1.50</span></div><div class="row"><span>Milestone<span class="work">12 ≥ 12 needed</span></span><span class="bonus">16.00</span></div><div class="row"><span>Rate<span class="work">12 vs 8.25 par off 9b</span></span><span class="pos">1.88</span></div><div class="row"><span>Contribution<span class="work">12 ÷ 4 ov</span></span><span class="pos">3.00</span></div><div class="row"><span>Wickets<span class="work">1 × 6</span></span><span class="pos">6.00</span></div><div class="row"><span>Dots<span class="work">3 × 0.25</span></span><span class="pos">0.75</span></div><div class="row"><span>Economy<span class="work">13 vs 5.50 par off 6b</span></span><span class="neg">-3.75</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">2.40</span></div><div class="row"><span>Player of the match<span class="work">flat</span></span><span class="bonus">3.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(34.38 + 5.40 + 0.00) × 1.1 + 3</span></span><span>47.05</span></div>
+        <p class="rec okk">stored 47.05 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>HT v NT</h4><p class="cond">2026-07-12 · 3 ov · match RR 3.60</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 4.5 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 1.80 par off 3b</span></span><span class="neg">-0.90</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 3 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-0.90 + 0.00 + 0.00) × 1.0</span></span><span>-0.90</span></div>
+        <p class="rec okk">stored -0.90 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>PR v GO</h4><p class="cond">2026-07-14 · 4 ov · match RR 5.87 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 6 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 2.93 par off 3b</span></span><span class="neg">-1.47</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 4 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-1.47 + 0.00 + 0.00) × 1.1</span></span><span>-1.61</span></div>
+        <p class="rec okk">stored -1.61 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>PR v GO</h4><p class="cond">2026-07-14 · 6 ov · match RR 4.94</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 9 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 0.82 par off 1b</span></span><span class="neg">-0.41</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 6 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-0.41 + 0.00 + 0.00) × 1.0</span></span><span>-0.41</span></div>
+        <p class="rec okk">stored -0.41 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>PR v GO</h4><p class="cond">2026-07-14 · 2 ov · match RR 3.39</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 3 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 1.13 par off 2b</span></span><span class="neg">-0.57</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 2 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-0.57 + 0.00 + 0.00) × 1.0</span></span><span>-0.57</span></div>
+        <p class="rec okk">stored -0.57 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>TB v TA</h4><p class="cond">2026-07-16 · 8 ov · match RR 5.57 · <b class="wl">won</b> · <b class="pm">player of the match</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">35 scored</span></span><span class="pos">35.00</span></div><div class="row"><span>Fours<span class="work">7 × 0.5</span></span><span class="pos">3.50</span></div><div class="row"><span>Milestone<span class="work">35 ≥ 24 needed</span></span><span class="bonus">16.00</span></div><div class="row"><span>Rate<span class="work">35 vs 21.34 par off 23b</span></span><span class="pos">6.83</span></div><div class="row"><span>Contribution<span class="work">35 ÷ 8 ov</span></span><span class="pos">4.38</span></div><div class="row"><span>Fielding<span class="work">1c</span></span><span class="pos">6.00</span></div><div class="row"><span>Player of the match<span class="work">flat</span></span><span class="bonus">3.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(65.71 + 0.00 + 6.00) × 1.1 + 3</span></span><span>82.18</span></div>
+        <p class="rec okk">stored 82.18 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>TA v TB</h4><p class="cond">2026-07-16 · 8 ov · match RR 4.13</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">14 scored</span></span><span class="pos">14.00</span></div><div class="row"><span>Fours<span class="work">3 × 0.5</span></span><span class="pos">1.50</span></div><div class="row"><span>Milestone<span class="work">14 ≥ 12 needed</span></span><span class="bonus">4.00</span></div><div class="row"><span>Rate<span class="work">14 vs 6.88 par off 10b</span></span><span class="pos">3.56</span></div><div class="row"><span>Contribution<span class="work">14 ÷ 8 ov</span></span><span class="pos">1.75</span></div><div class="row"><span>Wickets<span class="work">1 × 6</span></span><span class="pos">6.00</span></div><div class="row"><span>Dots<span class="work">4 × 0.25</span></span><span class="pos">1.00</span></div><div class="row"><span>Economy<span class="work">3 vs 4.13 par off 6b</span></span><span class="pos">0.56</span></div><div class="row"><span>Batters removed<span class="work">0.2 × victim runs, +4 cap each</span></span><span class="pos">2.00</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(24.81 + 9.56 + 0.00) × 1.0</span></span><span>34.37</span></div>
+        <p class="rec okk">stored 34.37 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>ST v LR</h4><p class="cond">2026-07-26 · 6 ov · match RR 8.00 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">10 scored</span></span><span class="pos">10.00</span></div><div class="row"><span>Fours<span class="work">2 × 0.5</span></span><span class="pos">1.00</span></div><div class="row"><span>Milestone<span class="work">10 ≥ 9 needed</span></span><span class="bonus">4.00</span></div><div class="row"><span>Rate<span class="work">10 vs 8.00 par off 6b</span></span><span class="pos">1.00</span></div><div class="row"><span>Contribution<span class="work">10 ÷ 6 ov</span></span><span class="pos">1.67</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">4 × 0.25</span></span><span class="pos">1.00</span></div><div class="row"><span>Economy<span class="work">5 vs 8.00 par off 6b</span></span><span class="pos">1.50</span></div><div class="row"><span>Fielding<span class="work">1ro</span></span><span class="pos">8.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(17.67 + 2.50 + 8.00) × 1.1</span></span><span>30.98</span></div>
+        <p class="rec okk">stored 30.98 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>ST v LR</h4><p class="cond">2026-07-26 · 6 ov · match RR 6.42</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 9 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 3.21 par off 3b</span></span><span class="neg">-1.60</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 6 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Wickets<span class="work">1 × 6</span></span><span class="pos">6.00</span></div><div class="row"><span>Dots<span class="work">8 × 0.25</span></span><span class="pos">2.00</span></div><div class="row"><span>Economy<span class="work">16 vs 12.83 par off 12b</span></span><span class="neg">-1.58</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-1.60 + 6.42 + 0.00) × 1.0</span></span><span>4.81</span></div>
+        <p class="rec okk">stored 4.81 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>AR v BR</h4><p class="cond">2026-07-28 · 6 ov · match RR 5.34 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">20 scored</span></span><span class="pos">20.00</span></div><div class="row"><span>Fours<span class="work">5 × 0.5</span></span><span class="pos">2.50</span></div><div class="row"><span>Milestone<span class="work">20 ≥ 18 needed</span></span><span class="bonus">16.00</span></div><div class="row"><span>Rate<span class="work">20 vs 11.58 par off 13b</span></span><span class="pos">4.21</span></div><div class="row"><span>Contribution<span class="work">20 ÷ 6 ov</span></span><span class="pos">3.33</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">5 × 0.25</span></span><span class="pos">1.25</span></div><div class="row"><span>Economy<span class="work">6 vs 5.34 par off 6b</span></span><span class="neg">-0.33</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(46.04 + 0.92 + 0.00) × 1.1</span></span><span>51.66</span></div>
+        <p class="rec okk">stored 51.66 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>AR v BR</h4><p class="cond">2026-07-28 · 6 ov · match RR 3.50 · <b class="wl">won</b></p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 9 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 1.75 par off 3b</span></span><span class="neg">-0.88</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 6 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Multiplier<span class="work">winning team</span></span><span class="mult">×1.1</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-0.88 + 0.00 + 0.00) × 1.1</span></span><span>-0.96</span></div>
+        <p class="rec okk">stored -0.96 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>ME v MO</h4><p class="cond">2026-07-30 · 8 ov · match RR 5.69</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">21 scored</span></span><span class="pos">21.00</span></div><div class="row"><span>Fours<span class="work">5 × 0.5</span></span><span class="pos">2.50</span></div><div class="row"><span>Milestone<span class="work">21 ≥ 20 needed</span></span><span class="bonus">12.00</span></div><div class="row"><span>Rate<span class="work">21 vs 25.59 par off 27b</span></span><span class="neg">-2.30</span></div><div class="row"><span>Contribution<span class="work">21 ÷ 8 ov</span></span><span class="pos">2.63</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">8 × 0.25</span></span><span class="pos">2.00</span></div><div class="row"><span>Economy<span class="work">16 vs 11.38 par off 12b</span></span><span class="neg">-2.31</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(35.83 + -0.31 + 0.00) × 1.0</span></span><span>35.52</span></div>
+        <p class="rec okk">stored 35.52 · reconciles</p>
+      </article><article class="strip">
+        <header class="sh"><h4>TU v TA</h4><p class="cond">2026-08-02 · 6 ov · match RR 4.33</p></header>
+        <div class="rows"><div class="row"><span>Runs<span class="work">0 scored</span></span><span class="zero">0.00</span></div><div class="row"><span>Milestone<span class="work">0 of 9 needed</span></span><span class="zero">0.00</span></div><div class="row"><span>Rate<span class="work">0 vs 5.78 par off 8b</span></span><span class="neg">-2.89</span></div><div class="row"><span>Contribution<span class="work">0 ÷ 6 ov</span></span><span class="zero">0.00</span></div><div class="row"><span>Wickets<span class="work">0 × 6</span></span><span class="zero">0.00</span></div><div class="row"><span>Dots<span class="work">10 × 0.25</span></span><span class="pos">2.50</span></div><div class="row"><span>Economy<span class="work">6 vs 8.67 par off 12b</span></span><span class="pos">1.33</span></div><div class="row"><span>Multiplier<span class="work">losing team</span></span><span class="mult">×1.0</span></div></div>
+        <div class="total"><span>Match total<span class="work">(-2.89 + 3.83 + 0.00) × 1.0</span></span><span>0.94</span></div>
+        <p class="rec okk">stored 0.94 · reconciles</p>
+      </article></div>
+    </section></main>
+  <footer>
+    <span>Rules: <code>docs/MVP_SCORING.md</code> · engine: <code>buildMvpPoints()</code></span>
+    <span>CricLive</span>
+  </footer>
+</div>

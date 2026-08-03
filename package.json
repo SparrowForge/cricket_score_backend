@@ -12,6 +12,9 @@
     "start:dev": "nest start --watch",
     "db:migrate": "node scripts/migrate.js",
     "smoke": "node scripts/smoke.js",
+    "openapi": "node scripts/generate-openapi.js",
+    "mvp:recalc": "node scripts/recalculate-mvp.js",
+    "mvp:audit": "node scripts/mvp-audit-report.js",
     "lint": "eslint \"src/**/*.ts\""
   },
   "dependencies": {
