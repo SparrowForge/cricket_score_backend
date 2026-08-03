@@ -63,20 +63,85 @@
         ]
       }
     },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "operationId": "AuthController_refresh",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "AuthController_logout",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/google": {
+      "post": {
+        "operationId": "AuthController_googleLogin",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleLoginDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
     "/api/v1/auth/me": {
       "get": {
         "operationId": "AuthController_me",
         "parameters": [],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -98,17 +163,9 @@
         },
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Update profile (name / avatar / phone).",
         "tags": [
           "Auth"
         ]
@@ -120,20 +177,9 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Resolved permission grants per scope — use to gate admin UI.",
         "tags": [
           "Auth"
         ]
@@ -182,7 +228,6 @@
             "description": ""
           }
         },
-        "summary": "Sends a reset link by email. Always returns {sent:true}.",
         "tags": [
           "Auth"
         ]
@@ -227,14 +272,7 @@
         ],
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -248,17 +286,7 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -305,17 +333,9 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Create an organization (you become owner, tournament admin, on the free plan).",
         "tags": [
           "Organizations"
         ]
@@ -325,20 +345,9 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Organizations you own or belong to.",
         "tags": [
           "Organizations"
         ]
@@ -359,14 +368,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -397,14 +399,28 @@
         },
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
+            "description": ""
+          }
+        },
+        "tags": [
+          "Organizations"
+        ]
+      },
+      "delete": {
+        "operationId": "OrgsController_remove",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
             }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
           }
         },
         "tags": [
@@ -427,17 +443,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -471,7 +477,37 @@
             "description": ""
           }
         },
-        "summary": "Add a registered user to the org with a role (tournament_admin | scorer | commentator | viewer).",
+        "tags": [
+          "Organizations"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/user-search": {
+      "get": {
+        "operationId": "OrgsController_userSearch",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
         "tags": [
           "Organizations"
         ]
@@ -514,20 +550,9 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Full permission catalog (resource + action) for the role editor grid.",
         "tags": [
           "RBAC"
         ]
@@ -548,20 +573,9 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "System roles + this org's custom roles, with their permission sets.",
         "tags": [
           "RBAC"
         ]
@@ -590,17 +604,9 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Create a custom org role with a permission set.",
         "tags": [
           "RBAC"
         ]
@@ -639,17 +645,9 @@
         },
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Edit a custom role; permission_ids (when given) replaces the whole set.",
         "tags": [
           "RBAC"
         ]
@@ -699,20 +697,9 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "All role assignments in this org's scope (org / tournament / match grants).",
         "tags": [
           "RBAC"
         ]
@@ -741,17 +728,9 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Grant a role scoped to the org, a tournament, or a single match.",
         "tags": [
           "RBAC"
         ]
@@ -794,20 +773,9 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Public pricing (marketing site). No auth required.",
         "tags": [
           "Plans"
         ]
@@ -819,20 +787,9 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "All plans incl. hidden/inactive (super admin).",
         "tags": [
           "Plans"
         ]
@@ -854,14 +811,7 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -894,14 +844,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -945,14 +888,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -983,17 +919,9 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Switch the org to another plan (trial starts automatically on paid plans).",
         "tags": [
           "Subscriptions"
         ]
@@ -1014,14 +942,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -1044,14 +965,7 @@
         ],
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -1332,6 +1246,35 @@
         "tags": [
           "Venues"
         ]
+      },
+      "delete": {
+        "operationId": "VenuesController_remove",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "venueId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Venues"
+        ]
       }
     },
     "/api/v1/orgs/{orgId}/teams": {
@@ -1550,6 +1493,37 @@
         ]
       }
     },
+    "/api/v1/players": {
+      "get": {
+        "operationId": "PlayersController_search",
+        "parameters": [
+          {
+            "name": "search",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Players"
+        ]
+      }
+    },
     "/api/v1/orgs/{orgId}/players": {
       "get": {
         "operationId": "PlayersController_list",
@@ -1604,6 +1578,29 @@
         },
         "responses": {
           "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Players"
+        ]
+      }
+    },
+    "/api/v1/players/leaders": {
+      "get": {
+        "operationId": "PlayersController_leaders",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
             "description": ""
           }
         },
@@ -1687,6 +1684,29 @@
         ]
       }
     },
+    "/api/v1/players/{playerId}/matches": {
+      "get": {
+        "operationId": "PlayersController_playerMatches",
+        "parameters": [
+          {
+            "name": "playerId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Players"
+        ]
+      }
+    },
     "/api/v1/tournaments": {
       "get": {
         "operationId": "TournamentsController_list",
@@ -1710,20 +1730,9 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Public tournament list (filter by status / org).",
         "tags": [
           "Tournaments"
         ]
@@ -1744,17 +1753,9 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Public tournament detail with groups + teams.",
         "tags": [
           "Tournaments"
         ]
@@ -1783,14 +1784,7 @@
         },
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -1834,20 +1828,9 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Public points table.",
         "tags": [
           "Tournaments"
         ]
@@ -1878,14 +1861,7 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -1918,14 +1894,7 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -1958,14 +1927,7 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -2029,20 +1991,9 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Generate DRAFT fixtures for review — nothing is persisted.",
         "tags": [
           "Tournaments"
         ]
@@ -2076,7 +2027,6 @@
             "description": ""
           }
         },
-        "summary": "Persist reviewed draft fixtures as scheduled matches.",
         "tags": [
           "Tournaments"
         ]
@@ -2113,17 +2063,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -2146,17 +2086,61 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      },
+      "patch": {
+        "operationId": "MatchesController_editMatch",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditMatchDto"
               }
             }
           }
         },
-        "summary": "Match detail + innings summary.",
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      },
+      "delete": {
+        "operationId": "MatchesController_deleteMatch",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
         "tags": [
           "Matches & Scoring"
         ]
@@ -2177,17 +2161,9 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Live state snapshot — Redis-first, Postgres fallback (`source` field says which). Prefer the WebSocket feed (/live) for push updates.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2216,20 +2192,9 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Last N ball events (Redis stream) for instant UI hydration.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2253,7 +2218,6 @@
             "description": ""
           }
         },
-        "summary": "Live presence: {viewers, scorers} currently connected via WebSocket.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2274,20 +2238,9 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Full scorecard (batting/bowling cards, fall of wickets).",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2308,20 +2261,9 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Over-by-over data (Manhattan / over comparison).",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2354,21 +2296,19 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "innings",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -2399,17 +2339,9 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Add manual commentary (commentator/scorer).",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2430,17 +2362,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -2466,7 +2388,6 @@
             "description": ""
           }
         },
-        "summary": "Stats tab: wagon-wheel vectors, partnerships, over-by-over run rate.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2487,17 +2408,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -2528,20 +2439,9 @@
         },
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Set one team's squad: playing XI + 12th man with can_bat/can_bowl toggles.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2570,14 +2470,7 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -2600,20 +2493,9 @@
         ],
         "responses": {
           "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Tournament leaderboards: metric = runs | wickets | mvp | sr | economy",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2644,14 +2526,7 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
         "tags": [
@@ -2687,7 +2562,6 @@
             "description": ""
           }
         },
-        "summary": "Grant a user match-scoped scorer access.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2721,7 +2595,6 @@
             "description": ""
           }
         },
-        "summary": "Set match officials (umpires, TV umpire, referee, scorer).",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2752,17 +2625,9 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Substitution: 12th man / concussion / impact player, with bat-bowl eligibility.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2799,6 +2664,60 @@
         "tags": [
           "Matches & Scoring"
         ]
+      },
+      "delete": {
+        "operationId": "MatchesController_undoToss",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/settings": {
+      "patch": {
+        "operationId": "MatchesController_updateSettings",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMatchSettingsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
       }
     },
     "/api/v1/matches/{id}/openers": {
@@ -2829,7 +2748,6 @@
             "description": ""
           }
         },
-        "summary": "Set opening batters + bowler; match goes live. Also used after an innings break.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2860,17 +2778,9 @@
         },
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Score one ball. Returns the new state + any effects (over_complete, innings_complete, match_complete…).",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2904,7 +2814,6 @@
             "description": ""
           }
         },
-        "summary": "Send in the next batter after a wicket.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2928,7 +2837,6 @@
             "description": ""
           }
         },
-        "summary": "Undo the most recent ball (append-only supersede + full replay rebuild).",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2962,7 +2870,6 @@
             "description": ""
           }
         },
-        "summary": "Offline sync: apply queued balls in order; stops at first conflict for client rebase.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -2996,7 +2903,6 @@
             "description": ""
           }
         },
-        "summary": "Pause play for rain / bad light. Match status → rain_delay.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -3030,7 +2936,29 @@
             "description": ""
           }
         },
-        "summary": "Resume play, optionally with a DLS/manual revision (reduced overs and/or revised target).",
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/innings/reopen": {
+      "post": {
+        "operationId": "MatchesController_reopenInnings",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
         "tags": [
           "Matches & Scoring"
         ]
@@ -3064,7 +2992,6 @@
             "description": ""
           }
         },
-        "summary": "Decide the pending follow-on (Tests): enforce or bat normally.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -3085,17 +3012,9 @@
         ],
         "responses": {
           "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
+            "description": ""
           }
         },
-        "summary": "Create the Super Over tie-breaker child match for a tied match.",
         "tags": [
           "Matches & Scoring"
         ]
@@ -3129,7 +3048,6 @@
             "description": ""
           }
         },
-        "summary": "Close the current innings manually (declaration, forfeit, rain-shortened).",
         "tags": [
           "Matches & Scoring"
         ]
@@ -3163,9 +3081,259 @@
             "description": ""
           }
         },
-        "summary": "Finalize: set player of the match, force a result (abandoned/no_result), rebuild stats.",
         "tags": [
           "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/can-score": {
+      "get": {
+        "operationId": "MatchesController_canScore",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/balls/{ballId}": {
+      "patch": {
+        "operationId": "MatchesController_editBall",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ballId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditBallDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/me/follows": {
+      "get": {
+        "operationId": "EngagementController_follows",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      },
+      "post": {
+        "operationId": "EngagementController_follow",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    },
+    "/api/v1/me/follows/{entityType}/{entityId}": {
+      "delete": {
+        "operationId": "EngagementController_unfollow",
+        "parameters": [
+          {
+            "name": "entityType",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entityId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    },
+    "/api/v1/me/devices": {
+      "post": {
+        "operationId": "EngagementController_registerDevice",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    },
+    "/api/v1/me/notification-preferences": {
+      "get": {
+        "operationId": "EngagementController_preferences",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      },
+      "put": {
+        "operationId": "EngagementController_setPreferences",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferencesDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    },
+    "/api/v1/me/notifications": {
+      "get": {
+        "operationId": "EngagementController_inbox",
+        "parameters": [
+          {
+            "name": "unread",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    },
+    "/api/v1/me/notifications/{id}/read": {
+      "post": {
+        "operationId": "EngagementController_markRead",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
+        ]
+      }
+    },
+    "/api/v1/me/notifications/read-all": {
+      "post": {
+        "operationId": "EngagementController_markAllRead",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Me — follows & notifications"
         ]
       }
     },
@@ -3232,6 +3400,27 @@
       }
     },
     "/api/v1/orgs/{orgId}/news": {
+      "get": {
+        "operationId": "NewsController_orgList",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "News"
+        ]
+      },
       "post": {
         "operationId": "NewsController_create",
         "parameters": [
@@ -3640,234 +3829,11 @@
           "Contact"
         ]
       }
-    },
-    "/api/v1/me/follows": {
-      "get": {
-        "operationId": "EngagementController_follows",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "tags": [
-          "Me — follows & notifications"
-        ]
-      },
-      "post": {
-        "operationId": "EngagementController_follow",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FollowDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "Me — follows & notifications"
-        ]
-      }
-    },
-    "/api/v1/me/follows/{entityType}/{entityId}": {
-      "delete": {
-        "operationId": "EngagementController_unfollow",
-        "parameters": [
-          {
-            "name": "entityType",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "entityId",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "Me — follows & notifications"
-        ]
-      }
-    },
-    "/api/v1/me/devices": {
-      "post": {
-        "operationId": "EngagementController_registerDevice",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DeviceDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "summary": "Register an FCM/APNs push token for this device.",
-        "tags": [
-          "Me — follows & notifications"
-        ]
-      }
-    },
-    "/api/v1/me/notification-preferences": {
-      "get": {
-        "operationId": "EngagementController_preferences",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        },
-        "tags": [
-          "Me — follows & notifications"
-        ]
-      },
-      "put": {
-        "operationId": "EngagementController_setPreferences",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PreferencesDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        },
-        "tags": [
-          "Me — follows & notifications"
-        ]
-      }
-    },
-    "/api/v1/me/notifications": {
-      "get": {
-        "operationId": "EngagementController_inbox",
-        "parameters": [
-          {
-            "name": "unread",
-            "required": true,
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "summary": "In-app notification inbox.",
-        "tags": [
-          "Me — follows & notifications"
-        ]
-      }
-    },
-    "/api/v1/me/notifications/{id}/read": {
-      "post": {
-        "operationId": "EngagementController_markRead",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "Me — follows & notifications"
-        ]
-      }
-    },
-    "/api/v1/me/notifications/read-all": {
-      "post": {
-        "operationId": "EngagementController_markAllRead",
-        "parameters": [],
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "Me — follows & notifications"
-        ]
-      }
     }
   },
   "info": {
     "title": "CricLive API",
-    "description": "Cricket live scoring platform ? auth, organizations, tournaments, ball-by-ball scoring, stats, SaaS plans, CMS. Authorize with the access_token from POST /auth/login.",
+    "description": "Cricket live scoring platform — auth, organizations, tournaments, ball-by-ball scoring, stats, SaaS plans, CMS. Authorize with the access_token from POST /auth/login.",
     "version": "1.0",
     "contact": {}
   },
@@ -3888,6 +3854,14 @@
         "properties": {}
       },
       "LoginDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "RefreshDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "GoogleLoginDto": {
         "type": "object",
         "properties": {}
       },
@@ -4027,7 +4001,15 @@
         "type": "object",
         "properties": {}
       },
+      "EditMatchDto": {
+        "type": "object",
+        "properties": {}
+      },
       "TossDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdateMatchSettingsDto": {
         "type": "object",
         "properties": {}
       },
@@ -4071,6 +4053,22 @@
         "type": "object",
         "properties": {}
       },
+      "EditBallDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "FollowDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "DeviceDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "PreferencesDto": {
+        "type": "object",
+        "properties": {}
+      },
       "CreateNewsDto": {
         "type": "object",
         "properties": {}
@@ -4092,18 +4090,6 @@
         "properties": {}
       },
       "ContactDto": {
-        "type": "object",
-        "properties": {}
-      },
-      "FollowDto": {
-        "type": "object",
-        "properties": {}
-      },
-      "DeviceDto": {
-        "type": "object",
-        "properties": {}
-      },
-      "PreferencesDto": {
         "type": "object",
         "properties": {}
       }
