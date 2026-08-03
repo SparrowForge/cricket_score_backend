@@ -165,13 +165,13 @@ export class StatsService {
    * MVP points. The authoritative specification, with worked examples, lives in
    * `docs/MVP_SCORING.md` — keep the two in step when either changes.
    *
-   * Summary: batting = runs + boundary bonus + a milestone scaled to the innings
-   * length + pace against the match run rate; bowling = wickets, dots, maidens,
-   * a haul bonus, economy against the match run rate and the value of the
-   * batters removed; fielding = catches/stumpings/run-outs less errors. Each
-   * stream keeps its own sign, so a crawl or a shelled catch genuinely costs the
-   * player. Flat match bonuses (+2 winning side, +3 player of the match) are
-   * added last, and the whole figure is multiplied by 1.1 for the winning team.
+   * Summary: batting = runs + boundary bonus + a format-dependent milestone +
+   * pace against the match run rate; bowling = wickets, dots, maidens, a haul
+   * bonus, economy against the match run rate and the value of the batters
+   * removed; fielding = catches/stumpings/run-outs less errors. Each stream
+   * keeps its own sign, so a crawl or a shelled catch genuinely costs the
+   * player. The player-of-the-match +3 is added last, and the whole figure is
+   * multiplied by 1.1 for the winning team.
    */
   private async buildMvpPoints(client: PoolClient, matchId: string) {
     await client.query(`DELETE FROM match_mvp_points WHERE match_id = $1`, [matchId]);
@@ -224,16 +224,34 @@ export class StatsService {
          -- run rate, or a fielder who shelled catches, genuinely cost their side
          -- and that has to survive into the total instead of being floored away
          -- stream by stream. Only the final figure is ever shown as 0.
+         --
+         -- Batting milestones are format-dependent:
+         -- For 1-20 overs: 1.5×O (+4), 2×O (+8), 2.5×O (+12), 3×O (+16)
+         -- For 21-50 overs: 1×O (+4), 1.4×O (+8), 1.6×O (+12), 2×O (+16)
+         -- For 51+ overs: 1×O (+4), 1.4×O (+8), 1.6×O (+12), 2×O (+16)
+         --
+         -- Contribution point: player_runs / overs_per_innings
+         -- Rewards players who score a significant share of team's runs
          SELECT pms.match_id, pms.player_id,
                 pms.runs_scored + pms.fours * 0.5 + pms.sixes * 1
-                + CASE WHEN pms.runs_scored >= 10 * ov.o THEN 16
-                       WHEN pms.runs_scored >= 8 * ov.o THEN 12
-                       WHEN pms.runs_scored >= 6 * ov.o THEN 8
-                       WHEN pms.runs_scored >= 4 * ov.o THEN 4
-                       ELSE 0 END
+                + CASE WHEN ov.o <= 20 THEN
+                        CASE WHEN pms.runs_scored >= 3 * ov.o THEN 16
+                             WHEN pms.runs_scored >= 2.5 * ov.o THEN 12
+                             WHEN pms.runs_scored >= 2 * ov.o THEN 8
+                             WHEN pms.runs_scored >= 1.5 * ov.o THEN 4
+                             ELSE 0 END
+                       ELSE
+                        CASE WHEN pms.runs_scored >= 2 * ov.o THEN 16
+                             WHEN pms.runs_scored >= 1.6 * ov.o THEN 12
+                             WHEN pms.runs_scored >= 1.4 * ov.o THEN 8
+                             WHEN pms.runs_scored >= 1 * ov.o THEN 4
+                             ELSE 0 END
+                       END
                 + CASE WHEN pms.batted AND pms.balls_faced > 0
                        THEN greatest(-8, least(8,
                             (pms.runs_scored - pms.balls_faced * mrr.rr / 6) * 0.5))
+                       ELSE 0 END
+                + CASE WHEN ov.o > 0 THEN pms.runs_scored::numeric / ov.o
                        ELSE 0 END AS batting,
                 pms.wickets_taken * 6 + pms.maidens * 4 + pms.dot_balls * 0.25
                 + CASE WHEN pms.wickets_taken >= 5 THEN 14
@@ -251,8 +269,6 @@ export class StatsService {
                 - coalesce(fe.missed_run_outs, 0) * 2
                 - coalesce(fe.misfields, 0) * 1 AS fielding,
                 CASE WHEN m.winner_team_id IS NOT NULL AND pms.team_id = m.winner_team_id
-                     THEN 2 ELSE 0 END AS win_bonus,
-                CASE WHEN m.winner_team_id IS NOT NULL AND pms.team_id = m.winner_team_id
                      THEN 1.1 ELSE 1.0 END AS win_factor
          FROM player_match_stats pms
          JOIN matches m ON m.id = pms.match_id
@@ -267,18 +283,17 @@ export class StatsService {
               round(batting * win_factor, 2),
               round(bowling * win_factor, 2),
               round(fielding * win_factor, 2),
-              -- Flat +2 for the winning side rides the same ×1.1 as everything
-              -- else; the player-of-the-match +3 is added once that is settled.
-              round((batting + bowling + fielding + win_bonus) * win_factor, 2)
+              -- Win bonus (+2) removed; winning team gets 1.1× multiplier on total.
+              -- Player-of-the-match +3 is added once that is settled.
+              round((batting + bowling + fielding) * win_factor, 2)
        FROM scored`,
       [matchId],
     );
 
     // Player of the Match is settled BEFORE the award bonus is paid, so the
     // bonus can never be what decides the winner. Ranked on performance only
-    // (the three stored components), not the total, which already carries the
-    // winning-side +2. Default to the top scorer unless the scorer named
-    // someone on the finalize screen.
+    // (the three stored components), not the total. Default to the top scorer
+    // unless the scorer named someone on the finalize screen.
     await client.query(
       `UPDATE matches SET player_of_match_id = (
          SELECT player_id FROM match_mvp_points WHERE match_id = $1
@@ -288,7 +303,7 @@ export class StatsService {
     );
 
     // The award bonus rides the same ×1.1 as the rest of the winner's score, so
-    // the stored total is exactly (bat + bowl + field + 2 + 3) × factor.
+    // the stored total is exactly (bat + bowl + field + 3) × factor.
     // Recomputed from scratch on every run, so re-finalising with a different
     // Player of the Match moves the points across instead of paying twice.
     await client.query(

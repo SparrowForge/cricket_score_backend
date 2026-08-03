@@ -1,0 +1,524 @@
+<!doctype html>
+<html>
+<head>
+<meta charset=utf8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>CricLive — MVP Scoring Rules (Updated)</title>
+
+<style>
+  :root {
+    --pitch:#eef2f7; --panel:#ffffff; --panel-2:#e8edf5; --line:#d3dce9;
+    --grass:#16a34a; --gold:#b45309; --cherry:#dc2626; --sky:#0284c7;
+    --ink:#0f172a; --mut:#5b6b85; --rule:#c3cfe0;
+    --shadow:0 1px 2px rgba(15,23,42,.06), 0 8px 24px -16px rgba(15,23,42,.25);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --pitch:#0b1120; --panel:#131c2e; --panel-2:#1a2540; --line:#24304d;
+      --grass:#22c55e; --gold:#fbbf24; --cherry:#ef4444; --sky:#38bdf8;
+      --ink:#e2e8f0; --mut:#8b9cbe; --rule:#2c3a5c;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -20px rgba(0,0,0,.9);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--pitch);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0 56px;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+  @media (min-width: 1000px) {
+    .wrap { grid-template-columns: 208px minmax(0, 1fr); }
+  }
+
+  header.mast {
+    grid-column: 1 / -1;
+    padding: 72px 0 36px;
+    border-bottom: 3px double var(--rule);
+    margin-bottom: 44px;
+  }
+  .eyebrow {
+    font-family: monospace;
+    font-size: 11px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--mut);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(38px, 6vw, 60px);
+    line-height: 1.04;
+    letter-spacing: -.02em;
+    margin: 0 0 16px;
+  }
+  .standfirst {
+    max-width: 62ch;
+    font-size: 17.5px;
+    color: var(--mut);
+    margin: 0;
+  }
+  .mast-meta {
+    display: flex; flex-wrap: wrap; gap: 8px 10px;
+    margin-top: 26px;
+    font-family: monospace;
+    font-size: 11.5px;
+  }
+  .chip {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 3px;
+    padding: 4px 9px;
+    color: var(--mut);
+  }
+  .chip b { color: var(--ink); font-weight: 600; }
+  .badge {
+    display: inline-block;
+    background: var(--cherry);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 8px;
+  }
+
+  nav.toc { display: none; }
+  @media (min-width: 1000px) {
+    nav.toc {
+      display: block;
+      position: sticky; top: 32px;
+      align-self: start;
+      font-size: 13.5px;
+    }
+  }
+  nav.toc p {
+    font-family: monospace;
+    font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--mut); margin: 0 0 12px;
+  }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  nav.toc a {
+    display: flex; gap: 10px;
+    padding: 5px 0;
+    color: var(--mut);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+  }
+  nav.toc a:hover, nav.toc a:focus-visible { color: var(--ink); }
+  nav.toc .n { font-family: monospace; font-size: 11px; color: var(--grass); padding-top: 2px; }
+
+  main { min-width: 0; display: grid; gap: 56px; }
+  section { scroll-margin-top: 24px; }
+  h2 {
+    font-size: 27px; font-weight: 600; letter-spacing: -.01em;
+    margin: 0 0 6px;
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  h2 .n {
+    font-family: monospace; font-size: 12px; font-weight: 500;
+    color: var(--grass); letter-spacing: .08em;
+  }
+  h3 {
+    font-size: 13px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--mut);
+    margin: 30px 0 10px;
+  }
+  p { max-width: 68ch; margin: 0 0 14px; }
+  .lede { color: var(--mut); max-width: 66ch; margin: 0 0 22px; }
+  code {
+    font-family: monospace; font-size: .88em;
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 3px; padding: 1px 5px;
+  }
+  strong { font-weight: 600; }
+
+  .ledger { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; min-width: 460px; font-size: 14.5px; }
+  caption {
+    caption-side: top; text-align: left;
+    font-family: monospace; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--mut);
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  th, td { padding: 9px 16px; text-align: left; border-bottom: 1px solid var(--line); }
+  tbody tr:last-child td { border-bottom: 0; }
+  thead th {
+    font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--mut); font-weight: 600;
+    background: var(--panel-2);
+  }
+  td.num, th.num { text-align: right; font-family: monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .pos { color: var(--grass); font-weight: 600; }
+  .neg { color: var(--cherry); font-weight: 600; }
+  .bonus { color: var(--gold); font-weight: 600; }
+  td .sub { display: block; color: var(--mut); font-size: 12.5px; }
+
+  .formula {
+    font-family: monospace; font-size: 13.5px; line-height: 1.75;
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-left: 3px solid var(--sky);
+    border-radius: 4px;
+    padding: 14px 18px; margin: 0 0 16px;
+    overflow-x: auto;
+  }
+
+  .note {
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--gold);
+    background: var(--panel);
+    border-radius: 4px;
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+  }
+  .note.updated {
+    border-top-color: var(--cherry);
+  }
+  .note h4 {
+    margin: 0 0 10px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--gold); font-family: monospace; font-weight: 700;
+  }
+  .note.updated h4 {
+    color: var(--cherry);
+  }
+  .note p:last-child { margin-bottom: 0; }
+  .note ul { margin: 0 0 12px; padding-left: 20px; }
+  .note li { margin-bottom: 8px; max-width: 66ch; }
+
+  .calc { display: grid; gap: 18px; }
+  @media (min-width: 720px) { .calc.two { grid-template-columns: 1fr 1fr; } }
+  .strip {
+    border: 1px solid var(--line); border-radius: 4px;
+    background: var(--panel); box-shadow: var(--shadow);
+    padding: 16px 18px 14px;
+  }
+  .strip h4 {
+    font-size: 17px; font-weight: 600;
+    margin: 0 0 3px;
+  }
+  .strip .cond {
+    font-family: monospace; font-size: 11.5px; color: var(--mut);
+    margin: 0 0 14px;
+  }
+  .rows { display: grid; gap: 0; font-size: 14px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 14px; padding: 6px 0; border-bottom: 1px dotted var(--rule); }
+  .row span:last-child { font-family: monospace; font-variant-numeric: tabular-nums; }
+  .row .work { color: var(--mut); font-size: 12.5px; }
+  .total {
+    display: grid; grid-template-columns: 1fr auto; gap: 14px;
+    margin-top: 8px; padding-top: 9px;
+    border-top: 3px double var(--rule);
+    font-weight: 700;
+  }
+  .total span:last-child { font-family: monospace; font-variant-numeric: tabular-nums; font-size: 17px; }
+
+  footer {
+    grid-column: 1 / -1;
+    margin-top: 72px; padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: 13px; color: var(--mut);
+    display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: space-between;
+  }
+  footer code { background: transparent; border: 0; padding: 0; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="mast">
+    <p class="eyebrow">CricLive · Scoring specification <span class="badge">UPDATED</span></p>
+    <h1>Most Valuable Player</h1>
+    <p class="standfirst">
+      How every player's match points are earned, penalised and totalled. Points are
+      rebuilt from ball-by-ball data each time a match is finalised — the formula can be
+      revised and every past match re-scored.
+    </p>
+    <div class="mast-meta">
+      <span class="chip">Implemented in <b>stats.service.ts</b> → <b>buildMvpPoints()</b></span>
+      <span class="chip">Streams <b>3</b></span>
+      <span class="chip">Winning-side multiplier <b>×1.1</b></span>
+      <span class="chip">Adjustment cap <b>±8</b></span>
+      <span class="chip">Updated <b>2025-08-03</b></span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <p>Contents</p>
+    <ol>
+      <li><a href="#batting"><span class="n">1</span> Batting</a></li>
+      <li><a href="#bowling"><span class="n">2</span> Bowling</a></li>
+      <li><a href="#fielding"><span class="n">3</span> Fielding</a></li>
+      <li><a href="#bonuses"><span class="n">4</span> Bonuses &amp; multiplier</a></li>
+      <li><a href="#signs"><span class="n">5</span> Signs</a></li>
+      <li><a href="#changelog"><span class="n">6</span> Recent changes</a></li>
+      <li><a href="#recalc"><span class="n">7</span> Recalculating</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <!-- 1 -->
+    <section id="batting">
+      <h2><span class="n">01</span> Batting</h2>
+      <p class="lede">Runs are the base. Boundaries add a little on top, a milestone rewards a
+        substantial innings for the format, a rate adjustment measures the knock against
+        what the match itself was scoring at, and a contribution point credits the batter's
+        share of the team's runs.</p>
+
+      <div class="ledger">
+        <table>
+          <caption>Batting components</caption>
+          <thead><tr><th>Component</th><th class="num">Points</th></tr></thead>
+          <tbody>
+            <tr><td>Runs</td><td class="num pos">+1 <span class="sub">per run</span></td></tr>
+            <tr><td>Fours</td><td class="num pos">+0.5 <span class="sub">each</span></td></tr>
+            <tr><td>Sixes</td><td class="num pos">+1 <span class="sub">each</span></td></tr>
+            <tr><td>Milestone<span class="sub">highest achieved only — they do not stack</span></td><td class="num bonus">+4 … +16</td></tr>
+            <tr><td>Rate adjustment<span class="sub">against the match run rate</span></td><td class="num">±0.5 <span class="sub">per run, capped ±8</span></td></tr>
+            <tr><td>Contribution point<span class="sub">player runs / overs per innings</span></td><td class="num pos">Variable <span class="sub">uncapped</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Milestones scale with innings length <span style="font-weight:400;letter-spacing:normal">— format-dependent</span></h3>
+      <p>Where <code>O</code> is the overs per innings, the bar moves with the format instead of
+        sitting at a fixed absolute value. A 24 in a five-over game is rewarded like a much larger
+        score in a T20.</p>
+
+      <div class="ledger">
+        <table>
+          <caption>Milestone thresholds — updated</caption>
+          <thead>
+            <tr><th colspan="2">1-20 over formats</th><th colspan="2">21+ over formats</th></tr>
+            <tr><th>Runs reached</th><th class="num">Bonus</th><th>Runs reached</th><th class="num">Bonus</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>1.5 × O</code></td><td class="num bonus">+4</td><td><code>1 × O</code></td><td class="num bonus">+4</td></tr>
+            <tr><td><code>2 × O</code></td><td class="num bonus">+8</td><td><code>1.4 × O</code></td><td class="num bonus">+8</td></tr>
+            <tr><td><code>2.5 × O</code></td><td class="num bonus">+12</td><td><code>1.6 × O</code></td><td class="num bonus">+12</td></tr>
+            <tr><td><code>3 × O</code></td><td class="num bonus">+16</td><td><code>2 × O</code></td><td class="num bonus">+16</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <h4>Examples</h4>
+        <p><strong>T20 (20 overs):</strong> 30 runs = +4 (1.5×20), 40 runs = +8 (2×20), 50 runs = +12 (2.5×20), 60 runs = +16 (3×20)</p>
+        <p><strong>ODI (50 overs):</strong> 50 runs = +4 (1×50), 70 runs = +8 (1.4×50), 80 runs = +12 (1.6×50), 100 runs = +16 (2×50)</p>
+      </div>
+
+      <h3>Rate adjustment</h3>
+      <div class="formula">expected   = balls_faced × match_run_rate ÷ 6
+adjustment = clamp((runs_scored − expected) × 0.5, −8, +8)</div>
+      <p>The match run rate spans <em>both</em> innings, so par is what the game itself was
+        scoring at. A batter who crawled below par loses points, and that loss is real — it is
+        not floored away.</p>
+
+      <h3>Contribution point</h3>
+      <div class="formula">contribution = runs_scored ÷ overs_per_innings</div>
+      <p>Rewards players who contribute a significant share of the team's runs relative to
+        match length. Unlike other metrics, this is <strong>uncapped</strong> and reflects the
+        actual contribution ratio. A 50 in a 20-over match yields 2.5 points; 100 in a 50-over
+        match yields 2.0 points — same fraction, same recognition across formats.</p>
+      <p><strong>Examples</strong>: T20 (20 overs): 20 runs = 1.0 pt, 40 runs = 2.0 pts, 60 runs = 3.0 pts.
+        ODI (50 overs): 50 runs = 1.0 pt, 100 runs = 2.0 pts, 150 runs = 3.0 pts.</p>
+    </section>
+
+    <!-- 2 -->
+    <section id="bowling">
+      <h2><span class="n">02</span> Bowling</h2>
+      <p class="lede">Wickets dominate, dots and maidens reward pressure, and two context terms
+        judge the spell against the match: economy versus par, and how set the batters removed
+        actually were.</p>
+
+      <div class="ledger">
+        <table>
+          <caption>Bowling components</caption>
+          <thead><tr><th>Component</th><th class="num">Points</th></tr></thead>
+          <tbody>
+            <tr><td>Wicket</td><td class="num pos">+6 <span class="sub">each</span></td></tr>
+            <tr><td>Dot ball</td><td class="num pos">+0.25 <span class="sub">each</span></td></tr>
+            <tr><td>Maiden</td><td class="num pos">+4 <span class="sub">each</span></td></tr>
+            <tr><td>Haul bonus<span class="sub">highest achieved only</span></td><td class="num bonus">+3 … +14</td></tr>
+            <tr><td>Economy adjustment<span class="sub">against the match run rate</span></td><td class="num">±0.5 <span class="sub">per run, capped ±8</span></td></tr>
+            <tr><td>Dismissed-batter value</td><td class="num pos">+0.2 <span class="sub">per victim run, +4 cap per wicket</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Haul bonus</h3>
+      <div class="ledger">
+        <table>
+          <caption>Wickets in the innings</caption>
+          <thead><tr><th>Wickets</th><th class="num">2</th><th class="num">3</th><th class="num">4</th><th class="num">5+</th></tr></thead>
+          <tbody>
+            <tr><td>Bonus</td><td class="num bonus">+3</td><td class="num bonus">+6</td><td class="num bonus">+10</td><td class="num bonus">+14</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Economy adjustment</h3>
+      <div class="formula">expected   = balls_bowled × match_run_rate ÷ 6
+adjustment = clamp((expected − runs_conceded) × 0.5, −8, +8)</div>
+
+      <h3>Dismissed-batter value</h3>
+      <p>For each wicket, the runs the batter had made <em>at the moment of dismissal</em> × 0.2,
+        capped at +4 for that wicket, then summed. Removing a set batter is worth more than
+        removing a tail-ender — but one huge scalp cannot dominate the innings. Run-outs and
+        retirements are excluded, since the bowler did not earn them.</p>
+    </section>
+
+    <!-- 3 -->
+    <section id="fielding">
+      <h2><span class="n">03</span> Fielding</h2>
+      <p class="lede">Chances taken earn; chances spilled cost. Errors come from the scorer's
+        quick buttons, which post commentary against a named fielder.</p>
+
+      <div class="ledger">
+        <table>
+          <caption>Fielding events</caption>
+          <thead><tr><th>Event</th><th class="num">Points</th></tr></thead>
+          <tbody>
+            <tr><td>Catch</td><td class="num pos">+6</td></tr>
+            <tr><td>Stumping</td><td class="num pos">+8</td></tr>
+            <tr><td>Run-out</td><td class="num pos">+8</td></tr>
+            <tr><td>Dropped catch</td><td class="num neg">−3</td></tr>
+            <tr><td>Missed run-out</td><td class="num neg">−2</td></tr>
+            <tr><td>Misfield</td><td class="num neg">−1</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section id="bonuses">
+      <h2><span class="n">04</span> Bonuses &amp; the winning multiplier</h2>
+      <p class="lede">Applied after the three streams above, strictly in this order — the
+        multiplier lands last, so it lifts the flat bonuses too.</p>
+
+      <div class="ledger">
+        <table>
+          <caption>Order of application — updated</caption>
+          <thead><tr><th class="num">Step</th><th>Applied to</th><th class="num">Effect</th></tr></thead>
+          <tbody>
+            <tr><td class="num">1</td><td>Player of the match</td><td class="num bonus">+3</td></tr>
+            <tr><td class="num">2</td><td>Every player on the winning team</td><td class="num" style="color:var(--sky);font-weight:600">×1.1</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="formula" style="margin-top:18px">total = (batting + bowling + fielding + potm_bonus) × win_factor</div>
+
+      <div class="note updated" style="margin-top:18px">
+        <h4>Changed in this version</h4>
+        <p><strong>Removed:</strong> +2 winning team bonus. Every participating player on the winning team previously received a flat +2 points. This has been removed; the winning team now receives only the 1.1× multiplier on their base score.</p>
+        <p><strong>Why:</strong> Simplified logic and eliminated double-bonus confusion. The 1.1× multiplier adequately rewards the winning team.</p>
+      </div>
+
+      <h3>The award is settled before it is paid</h3>
+      <p>The +3 must never decide who wins it. Selection ranks on the three <em>performance</em>
+        components only — not the total, which already carries the winning-side multiplier.
+        A player named by the scorer on the finalize screen always wins; the automatic pick applies only
+        when nobody was named.</p>
+    </section>
+
+    <!-- 5 -->
+    <section id="signs">
+      <h2><span class="n">05</span> Signs</h2>
+      <p>Each stream keeps its own sign. A batter who crawled well below par, or a fielder who
+        shelled catches, genuinely cost their side — and that has to survive into the total
+        rather than being floored away stream by stream.</p>
+      <p>Only the <strong>final figure</strong> is clamped to zero, and only for display in
+        leaderboards.</p>
+    </section>
+
+    <!-- 6 -->
+    <section id="changelog">
+      <h2><span class="n">06</span> Recent changes</h2>
+
+      <div class="note updated">
+        <h4>Contribution point added</h4>
+        <p><strong>New component:</strong> <code>runs_scored ÷ overs_per_innings</code></p>
+        <p>Rewards batters who contribute a significant share of the team's run total. This is
+          uncapped and scales proportionally across formats — a 50 in a 20-over match and a 125
+          in a 50-over match both yield 2.5 points.</p>
+        <p><strong>Impact:</strong> Higher-scoring batters gain additional points. In shorter
+          formats the effect is more pronounced per run, which correctly reflects the greater
+          value of each run when there are fewer overs to score them in.</p>
+      </div>
+
+      <div class="note updated">
+        <h4>Format-dependent batting milestones</h4>
+        <p><strong>Changed:</strong> Milestone thresholds now scale with overs per innings.</p>
+        <ul>
+          <li><strong>1-20 overs:</strong> 1.5×O (+4), 2×O (+8), 2.5×O (+12), 3×O (+16)</li>
+          <li><strong>21+ overs:</strong> 1×O (+4), 1.4×O (+8), 1.6×O (+12), 2×O (+16)</li>
+        </ul>
+        <p><strong>Old formula:</strong> Absolute thresholds — 4×O, 6×O, 8×O, 10×O</p>
+        <p><strong>Impact:</strong> Better format-appropriate rewards. A 50 in a 5-over game is now recognized as +4, whereas a 100 in a 50-over match is +16, making thresholds fairer across formats.</p>
+      </div>
+
+      <div class="note updated">
+        <h4>Removed winning team flat bonus</h4>
+        <p><strong>Changed:</strong> Removed the +2 points for every player on the winning team.</p>
+        <p><strong>Old formula:</strong> Batting + bowling + fielding + 2 (if winner) + 3 (if POTM) × 1.1</p>
+        <p><strong>New formula:</strong> Batting + bowling + fielding + 3 (if POTM) × 1.1</p>
+        <p><strong>Impact:</strong> Simpler calculation, no double bonus confusion. Winning team still receives 1.1× multiplier on base score.</p>
+      </div>
+
+      <div class="note updated">
+        <h4>Historical data recalculation</h4>
+        <p><strong>Action required:</strong> All previously completed matches must be recalculated with the new formula. Use:</p>
+        <div class="formula">node scripts/recalculate-mvp.js</div>
+        <p>This script rebuilds MVP points for all completed matches and updates tournament and career stats. It is idempotent and can be run safely multiple times.</p>
+      </div>
+    </section>
+
+    <!-- 7 -->
+    <section id="recalc">
+      <h2><span class="n">07</span> Recalculating</h2>
+      <p>The formula derives entirely from stored ball-by-ball data, so changing it means
+        re-running the build for every completed match. It is idempotent — running it twice
+        produces identical figures, because each pass rebuilds rather than accumulates.</p>
+
+      <div class="formula">StatsService.recalculateMvp(matchId)   // per completed match
+node scripts/recalculate-mvp.js      // all completed matches</div>
+
+      <div class="note">
+        <h4>Do not use finalizeMatch to replay</h4>
+        <p><code>finalizeMatch()</code> also calls <code>notifyFollowers()</code>, and the
+          <code>notifications</code> table has no unique constraint — replaying it would send
+          every follower a duplicate "match finished" alert for a game they were told about days
+          ago. <code>recalculateMvp()</code> rebuilds points and the tournament and career
+          rollups, and nothing else.</p>
+        <p style="margin-top:12px"><b>This rewrites live figures.</b> Every player's MVP number
+          and every leaderboard position moves. Verify inside a rolled-back transaction
+          (<code>BEGIN … ROLLBACK</code>) before writing to production.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <span>Source of truth: <code>docs/MVP_SCORING.md</code> — keep it in step with <code>buildMvpPoints()</code>.</span>
+    <span>CricLive</span>
+  </footer>
+
+</div>
+
+</body>
+</html>

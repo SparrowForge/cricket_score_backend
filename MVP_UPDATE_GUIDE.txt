@@ -1,0 +1,107 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║              MVP SCORING FORMULA UPDATE - QUICK REFERENCE                   ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+WHAT CHANGED:
+─────────────
+
+1. CONTRIBUTION POINT (NEW)
+   Formula: player_runs / overs_per_innings
+
+   Examples:
+   ├─ T20 (20 overs):   20 runs = 1.0 point,   40 runs = 2.0 points,   60 runs = 3.0 points
+   └─ ODI (50 overs):   50 runs = 1.0 point,  100 runs = 2.0 points,  150 runs = 3.0 points
+
+   • Rewards significant batting contributions
+   • Uncapped — reflects actual contribution ratio
+   • Fair across all formats
+
+2. BATTING MILESTONE THRESHOLDS
+   OLD (absolute):  4×O, 6×O, 8×O, 10×O
+
+   NEW (format-dependent):
+   ├─ 1-20 overs:   1.5×O, 2×O, 2.5×O, 3×O
+   └─ 21+ overs:    1×O, 1.4×O, 1.6×O, 2×O
+
+2. WINNING TEAM BONUS
+   OLD: +2 points for every team member + 1.1× multiplier
+   NEW: Only 1.1× multiplier (no flat +2)
+
+EXAMPLES:
+─────────
+
+T20 Match (20 overs):
+  • 30 runs = +4 (1.5×20)     ← was 4×20, not reached
+  • 40 runs = +8 (2×20)        ← old was 4×20
+  • 50 runs = +12 (2.5×20)     ← old was 6×20
+  • 60 runs = +16 (3×20)       ← old was 8×20
+
+ODI Match (50 overs):
+  • 50 runs = +4 (1×50)        ← was 4×50, not reached
+  • 70 runs = +8 (1.4×50)      ← old was 4×50
+  • 80 runs = +12 (1.6×50)     ← old was 6×50
+  • 100 runs = +16 (2×50)      ← old was 10×50
+
+DEPLOYMENT STEPS:
+─────────────────
+
+Step 1: Deploy code changes
+  $ cd backend && npm run build && npm run deploy
+
+Step 2: Recalculate all historical matches
+  $ node scripts/recalculate-mvp.js
+
+  Expected output:
+    Fetching all completed matches...
+    Found XXX completed matches
+
+    [1/XXX] ✓ Recalculated MVP for match ...
+    [2/XXX] ✓ Recalculated MVP for match ...
+    ...
+    ✓ Recalculation complete
+
+Step 3: Verify results
+  - Check MVP leaderboards
+  - Confirm top players still rank correctly
+  - Spot-check a few match details
+
+FILES CHANGED:
+──────────────
+
+Modified:
+  ✓ src/matches/stats.service.ts
+
+Created:
+  ✓ scripts/recalculate-mvp.js
+  ✓ docs/MVP_SCORING.md (detailed formula specification)
+  ✓ docs/MVP_CHANGES.md (migration guide)
+  ✓ IMPLEMENTATION_SUMMARY.md (full technical details)
+
+KEY BENEFITS:
+──────────────
+
+✓ Format-appropriate milestones
+  • T20s don't punish for scoring "only" 50 runs
+  • ODIs recognize century more appropriately
+
+✓ Simpler logic
+  • No double-bonus confusion
+  • Clean 1.1× multiplier for winning team
+
+✓ More competitive scoring
+  • Better rewards for format-specific performances
+
+IMPORTANT NOTES:
+─────────────────
+
+• Script is idempotent - can be run multiple times
+• Changes apply only to NEW matches after deployment
+• Historical matches MUST be recalculated separately
+• No changes to bowling or fielding calculations
+• Player of Match bonus (+3) unchanged
+• Losing team points unchanged (no win bonus anyway)
+
+For detailed information, see:
+  - docs/MVP_SCORING.md (formula specification)
+  - docs/MVP_CHANGES.md (migration instructions)
+  - IMPLEMENTATION_SUMMARY.md (technical details)
