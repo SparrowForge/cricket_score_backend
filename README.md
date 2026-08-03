@@ -124,6 +124,13 @@ node reaches every connected client.
 
 After deploying, point the frontend's `NEXT_PUBLIC_WS_URL` at the Render URL.
 
+[`app.js`](app.js) is the **cPanel / Phusion Passenger** entry point for hosts
+that boot a plain Node file rather than running `npm start`. It loads `.env`
+from its own directory before booting Nest, so the app never depends on
+Passenger's working directory and secrets containing spaces, braces or
+newlines (`FIREBASE_SERVICE_ACCOUNT`, `SMTP_PASS`) survive intact. It requires
+`dist/`, so build before deploying.
+
 ## Database
 
 Schema is hand-written SQL in [`migrations/`](migrations), applied in filename
