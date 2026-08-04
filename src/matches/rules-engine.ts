@@ -197,13 +197,26 @@ export function applyBall(state: LiveInningsState, ev: BallEvent, rules: FormatR
   return { ok: true, next, effects };
 }
 
-function maybeCloseChase(next: LiveInningsState, rules: FormatRules, effects: SideEffect[]): void {
-  if (next.target === null) return; // first innings ends normally
-  if (next.totalRuns === next.target - 1) {
-    effects.push(rules.super_over.enabled ? { kind: 'super_over_required' } : { kind: 'match_complete', result: 'tie' });
-  } else {
-    effects.push({ kind: 'match_complete', result: 'win' }); // defending side wins
+/**
+ * What an innings ending short of its target means for the match: a level score
+ * is a tie (or a super over), anything less hands it to the defending side.
+ * Returns null when the innings isn't a chase, so it just ends normally.
+ *
+ * Exported because an innings can also be closed outside the ball stream — a
+ * declaration, or the scorer shortening the innings to the overs already
+ * bowled — and those paths must reach the identical verdict.
+ */
+export function chaseCloseEffect(state: LiveInningsState, rules: FormatRules): SideEffect | null {
+  if (state.target === null) return null; // first innings ends normally
+  if (state.totalRuns === state.target - 1) {
+    return rules.super_over?.enabled ? { kind: 'super_over_required' } : { kind: 'match_complete', result: 'tie' };
   }
+  return { kind: 'match_complete', result: 'win' }; // defending side wins
+}
+
+function maybeCloseChase(next: LiveInningsState, rules: FormatRules, effects: SideEffect[]): void {
+  const effect = chaseCloseEffect(next, rules);
+  if (effect) effects.push(effect);
 }
 
 const err = (code: string, message: string): ValidationResult => ({ ok: false, code, message });

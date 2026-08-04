@@ -6,7 +6,7 @@ import { PG_POOL } from '../database/database.module';
 import { SaasService } from '../saas/saas.service';
 import { deepMerge } from './matches.service';
 import { LiveStateService } from './live-state.service';
-import { applyBall, BallEvent, FormatRules, LiveInningsState, SideEffect } from './rules-engine';
+import { applyBall, BallEvent, chaseCloseEffect, FormatRules, LiveInningsState, SideEffect } from './rules-engine';
 import { StatsService } from './stats.service';
 
 /**
@@ -142,9 +142,9 @@ export class ScoringService {
   ) {
     const out = await this.withMatch(matchId, async (client, match) => {
       // Settings can be edited at any point up to (but not after) the match is
-      // decided. They only change the rules_snapshot the engine reads for each
-      // subsequent ball, so mid-innings edits take effect going forward — a
-      // finished match's result must stay frozen.
+      // decided, in any innings; they take effect from the next ball. Shortening
+      // the innings is the one edit that can bite immediately — see below — but
+      // a finished match's result must stay frozen.
       if (['completed', 'abandoned', 'no_result', 'cancelled', 'forfeited'].includes(match.status)) {
         throw new BadRequestException(
           `Cannot edit settings after the match is finished (status: ${match.status})`,
@@ -174,15 +174,29 @@ export class ScoringService {
         rules = fmt?.rules || {};
       }
 
-      // Validate overs_per_innings: cannot reduce below completed overs
+      const ls = match.live_state;
+      const ballsPerOver = rules.balls_per_over ?? 6;
+
+      // Validate overs_per_innings against the innings actually in play: the new
+      // length has to leave room for every ball already bowled. Compared in
+      // BALLS, not completed overs — at 2.3 overs a limit of 2 is already in the
+      // past, even though `floor(15/6)` says only 2 overs are "complete".
+      let closeInningsNow = false;
       if (dto.overs_per_innings !== undefined && dto.overs_per_innings > 0) {
-        const ballsPerOver = rules.balls_per_over ?? 6;
-        const completedOvers = Math.floor((match.live_state?.engine?.legalBalls ?? 0) / ballsPerOver);
-        if (dto.overs_per_innings < completedOvers) {
+        const legalBalls = ls?.engine?.legalBalls ?? 0;
+        const allowedBalls = dto.overs_per_innings * ballsPerOver;
+        if (legalBalls > allowedBalls) {
           throw new BadRequestException(
-            `Cannot set overs_per_innings to ${dto.overs_per_innings} (already completed ${completedOvers} overs)`,
+            `Cannot set overs per innings to ${dto.overs_per_innings} — ` +
+            `${Math.floor(legalBalls / ballsPerOver)}.${legalBalls % ballsPerOver} overs have already been bowled in this innings`,
           );
         }
+        // Exactly at the new limit: the innings is over the moment the setting
+        // lands. Nothing else can close it — the engine only tests the overs
+        // limit while applying a ball, and no further ball is legal — so it
+        // has to be closed here or the batting side keeps batting past its
+        // own allocation.
+        closeInningsNow = !!ls?.engine && legalBalls === allowedBalls;
       }
 
       // Update the settable fields in rules
@@ -209,10 +223,65 @@ export class ScoringService {
 
       // Update match rules_snapshot
       await client.query(`UPDATE matches SET rules_snapshot = $1 WHERE id = $2`, [rules, matchId]);
-      return { rules_snapshot: rules, status: match.status };
+
+      // rules_snapshot alone only governs innings that haven't been created yet.
+      // Each innings carries its OWN max_overs (the effective, rain-reducible
+      // length), copied into live_state.engine.maxOvers when its openers are
+      // picked — and that engine copy is what actually ends the innings. Without
+      // pushing the change down to both, a mid-innings edit silently does
+      // nothing to the innings being played (and an edit during the break does
+      // nothing to the already-created next innings).
+      let closed = false;
+      let matchCompleted = false;
+      if (dto.overs_per_innings !== undefined) {
+        await client.query(
+          `UPDATE innings SET max_overs = $2
+           WHERE match_id = $1 AND status IN ('not_started', 'in_progress')`,
+          [matchId, dto.overs_per_innings],
+        );
+        if (ls?.engine) ls.engine.maxOvers = dto.overs_per_innings;
+      }
+
+      if (closeInningsNow) {
+        // Same two-step the ball path takes for an overs-exhausted innings, in
+        // the same order: close the innings first, then settle the match if
+        // this was the chase (completeInnings leaves live_state.engine alone
+        // for the final innings precisely so completeMatch can read it).
+        const chase = chaseCloseEffect(ls.engine, rules);
+        await this.completeInnings(client, match, ls, rules, 'overs');
+        closed = true;
+        if (chase) {
+          matchCompleted = true;
+          await this.completeMatch(client, match, ls, rules, chase);
+        }
+      }
+
+      if (ls) {
+        if (ls.innings_id) ls.summary = await this.buildSummary(client, ls, rules);
+        await client.query(`UPDATE matches SET live_state = $2 WHERE id = $1`, [matchId, JSON.stringify(ls)]);
+      }
+
+      return {
+        rules_snapshot: rules,
+        status: match.status,
+        innings_closed: closed,
+        _matchCompleted: matchCompleted,
+        _parent: match.parent_match_id,
+      };
     });
     await this.live.syncAndPublish(matchId, 'settings', { rules_snapshot: out.rules_snapshot });
-    return out;
+    if (out.innings_closed) {
+      await this.live.syncAndPublish(matchId, 'status', {
+        transition: out._matchCompleted ? 'match_completed' : 'innings_closed',
+      });
+    }
+    if (out._matchCompleted) {
+      await this.live.expireMatch(matchId);
+      if (out._parent) await this.live.syncAndPublish(out._parent, 'status', { transition: 'super_over_result' });
+      setImmediate(() => this.stats.finalizeMatch(matchId).catch((e) => console.error('stats finalize failed:', e.message)));
+    }
+    const { _matchCompleted, _parent, ...pub } = out;
+    return pub;
   }
 
   // ------------------------------------------------------------ open innings
