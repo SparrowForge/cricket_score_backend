@@ -380,7 +380,10 @@ export class StatsService {
           `SELECT
              count(*) FILTER (WHERE m.status = 'completed')::int AS played,
              count(*) FILTER (WHERE m.winner_team_id = $2)::int AS won,
-             count(*) FILTER (WHERE m.status = 'completed' AND m.result_type = 'win' AND m.winner_team_id <> $2)::int AS lost,
+             -- 'forfeit' counts as a defeat for the side that walked away, the
+             -- same as 'win' — without it that team's row shows played 1 / won
+             -- 0 / lost 0. NRR (below) deliberately still ignores forfeits.
+             count(*) FILTER (WHERE m.status = 'completed' AND m.result_type IN ('win','forfeit') AND m.winner_team_id <> $2)::int AS lost,
              count(*) FILTER (WHERE m.result_type = 'tie')::int AS tied,
              count(*) FILTER (WHERE m.result_type IN ('no_result','abandoned'))::int AS no_result
            FROM matches m

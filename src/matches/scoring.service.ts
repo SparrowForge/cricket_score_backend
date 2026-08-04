@@ -16,6 +16,15 @@ import { StatsService } from './stats.service';
 const APPLIED_EVENT_ID_HISTORY = 40;
 
 /**
+ * A match-ending outcome the rules engine can never produce, because it isn't
+ * reachable from a delivery: the side batting (or due to bat) in the final
+ * innings gave that innings up. Kept out of `SideEffect` so the engine stays a
+ * pure function of the ball stream; `completeMatch` accepts it alongside the
+ * engine's own effects.
+ */
+type ForfeitEffect = { kind: 'innings_forfeited' };
+
+/**
  * Scoring engine over Postgres.
  * Concurrency: the match row is SELECT … FOR UPDATE for every mutation, and
  * clients pass expected_seq (optimistic check) + client_event_id (idempotency),
@@ -189,6 +198,27 @@ export class ScoringService {
           throw new BadRequestException(
             `Cannot set overs per innings to ${dto.overs_per_innings} — ` +
             `${Math.floor(legalBalls / ballsPerOver)}.${legalBalls % ballsPerOver} overs have already been bowled in this innings`,
+          );
+        }
+
+        // Ceiling for every innings after the first: a side that bats later can
+        // never be handed MORE overs than a side that has already finished. The
+        // first innings' allocation is what the chase was built around — raising
+        // it now would hand the chasing team overs the side setting the target
+        // never had. Reducing stays legal (that's the rain path).
+        const cap = (
+          await client.query(
+            `SELECT min(max_overs)::float8 AS cap FROM innings
+             WHERE match_id = $1 AND max_overs IS NOT NULL
+               AND status IN ('completed', 'declared', 'forfeited')`,
+            [matchId],
+          )
+        ).rows[0]?.cap ?? null;
+        if (cap !== null && dto.overs_per_innings > cap) {
+          throw new BadRequestException(
+            `Cannot set overs per innings to ${dto.overs_per_innings} — ` +
+            `a completed innings was only allocated ${+cap.toFixed(1)} overs, and a side ` +
+            `batting later cannot get more. Reopen that innings if it was set up wrong.`,
           );
         }
         // Exactly at the new limit: the innings is over the moment the setting
@@ -804,13 +834,78 @@ export class ScoringService {
       if (reason === 'declared' && !rules.declaration_allowed) {
         throw new BadRequestException('Declaration is not allowed in this format');
       }
+
+      // Closing the FINAL innings has to settle the match right here.
+      // completeInnings deliberately returns early for it ("match end handled
+      // by match_complete effect"), leaving live_state.engine intact so the
+      // chase total stays readable — but on the ball path that effect comes
+      // from the engine, and nothing follows a manual close. Same two-step, in
+      // the same order, as the closeInningsNow block in updateSettings.
+      const totalInnings = (rules.innings_per_side ?? 1) * 2;
+      const isFinalInnings = (ls.innings_seq ?? 0) >= totalInnings;
+
+      // The engine is legitimately absent when the final innings is given up
+      // before its openers are picked (a side forfeiting without batting).
+      // Stand in with the innings row's own figures so the verdict and the
+      // winning margin still have a chase total, target and overs to read, then
+      // put live_state back as it was — a match that never got under way must
+      // not publish a phantom engine state.
+      const engineWasMissing = isFinalInnings && !ls.engine;
+      if (engineWasMissing) ls.engine = await this.engineFromInningsRow(client, ls.innings_id);
+
+      // A forfeit is not a chase verdict. The side that walked away loses
+      // outright whatever the scoreboard says: level scores are a win by
+      // forfeit, never a tie, and must never send the match to a super over.
+      const effect: SideEffect | ForfeitEffect | null = !isFinalInnings ? null
+        : reason === 'forfeited' ? { kind: 'innings_forfeited' }
+        : chaseCloseEffect(ls.engine, rules);
+
       await this.completeInnings(client, match, ls, rules, reason);
+      let matchCompleted = false;
+      if (effect) {
+        matchCompleted = true;
+        await this.completeMatch(client, match, ls, rules, effect);
+      }
+      if (engineWasMissing) ls.engine = null;
+
       if (ls.innings_id) ls.summary = await this.buildSummary(client, ls, rules);
       await client.query(`UPDATE matches SET live_state = $2 WHERE id = $1`, [matchId, JSON.stringify(ls)]);
-      return { state: ls };
+      return { state: ls, _matchCompleted: matchCompleted, _parent: match.parent_match_id };
     });
-    await this.live.syncAndPublish(matchId, 'status', { transition: 'innings_closed' });
-    return out;
+    await this.live.syncAndPublish(matchId, 'status', {
+      transition: out._matchCompleted ? 'match_completed' : 'innings_closed',
+    });
+    if (out._matchCompleted) {
+      await this.live.expireMatch(matchId);
+      // Super-over children propagate their result onto the parent match
+      if (out._parent) await this.live.syncAndPublish(out._parent, 'status', { transition: 'super_over_result' });
+      setImmediate(() => this.stats.finalizeMatch(matchId).catch((e) => console.error('stats finalize failed:', e.message)));
+    }
+    const { _matchCompleted, _parent, ...pub } = out;
+    return pub;
+  }
+
+  /**
+   * Stand-in engine state for an innings that has none — closed before its
+   * openers were picked. Only the scoring figures are real (they come off the
+   * innings row); the batter/bowler fields are placeholders, so this is for
+   * reading a result out of, never for applying a ball to.
+   */
+  private async engineFromInningsRow(client: PoolClient, inningsId: string): Promise<LiveInningsState> {
+    const inn = (
+      await client.query(
+        `SELECT total_runs, total_wickets, legal_balls, max_overs, target_runs FROM innings WHERE id = $1`,
+        [inningsId],
+      )
+    ).rows[0];
+    return {
+      seq: 0,
+      totalRuns: inn.total_runs, totalWickets: inn.total_wickets, legalBalls: inn.legal_balls,
+      maxOvers: inn.max_overs !== null ? Number(inn.max_overs) : null,
+      target: inn.target_runs,
+      freeHitPending: false, currentOverBalls: 0, lastOverBowlerId: null,
+      bowlerLegalBalls: {}, strikerId: '', nonStrikerId: '', battersRetiredHurt: [],
+    };
   }
 
   // -------------------------------------------------- reopen innings (undo close/declare)
@@ -1220,7 +1315,9 @@ export class ScoringService {
     setImmediate(() => this.stats.finalizeMatch(match.id).catch((e) => console.error('stats finalize failed:', e.message)));
   }
 
-  private async completeMatch(client: PoolClient, match: any, ls: any, rules: FormatRules, effect: SideEffect) {
+  private async completeMatch(
+    client: PoolClient, match: any, ls: any, rules: FormatRules, effect: SideEffect | ForfeitEffect,
+  ) {
     const innings = (
       await client.query(
         `SELECT i.*, tm.short_name FROM innings i JOIN teams tm ON tm.id = i.batting_team_id
@@ -1234,7 +1331,18 @@ export class ScoringService {
     let margin: any = null;
     let summary = '';
 
-    if (effect.kind === 'super_over_required' || (effect.kind === 'match_complete' && effect.result === 'tie')) {
+    if (effect.kind === 'innings_forfeited') {
+      // Forfeiting hands the match to the other side outright — no margin in
+      // runs or wickets exists to quote, and the score is deliberately not
+      // consulted (a forfeit at a level score is still a defeat, not a tie).
+      winner = last.bowling_team_id;
+      resultType = 'forfeit';
+      margin = { by: 'forfeit' };
+      const winShort = (
+        await client.query(`SELECT short_name FROM teams WHERE id = $1`, [winner])
+      ).rows[0].short_name;
+      summary = `${winShort} won by forfeit`;
+    } else if (effect.kind === 'super_over_required' || (effect.kind === 'match_complete' && effect.result === 'tie')) {
       resultType = 'tie';
       summary = 'Match tied';
     } else {
