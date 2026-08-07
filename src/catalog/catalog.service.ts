@@ -399,6 +399,7 @@ export class CatalogService {
                 sum(pcs.twenties)::int AS twenties,
                 sum(pcs.fours)::int AS fours,
                 sum(pcs.sixes)::int AS sixes,
+                sum(pcs.ducks)::int AS ducks,
                 CASE WHEN sum(pcs.innings_batted - pcs.not_outs) > 0
                      THEN round(sum(pcs.runs_scored)::numeric / (sum(pcs.innings_batted) - sum(pcs.not_outs)), 2) END AS batting_average,
                 CASE WHEN sum(pcs.balls_faced) > 0
