@@ -333,9 +333,9 @@ export class StatsService {
     await client.query(
       `INSERT INTO player_tournament_stats (tournament_id, player_id, team_id, matches_played,
          innings_batted, runs_scored, balls_faced, not_outs, highest_score, highest_score_not_out,
-         fifties, hundreds, fours, sixes, ducks,
+         fifties, hundreds, thirties, twenties, fours, sixes, ducks,
          innings_bowled, balls_bowled, runs_conceded, wickets_taken, best_bowling,
-         three_wkt_hauls, five_wkt_hauls, maidens, catches, stumpings, run_outs, mvp_points)
+         two_wkt_hauls, three_wkt_hauls, four_wkt_hauls, five_wkt_hauls, maidens, catches, stumpings, run_outs, mvp_points)
        SELECT tournament_id, player_id, max(team_id::text)::uuid,
               count(*)::int,
               count(*) FILTER (WHERE batted)::int,
@@ -346,6 +346,8 @@ export class StatsService {
                        WHERE p2.tournament_id = pms.tournament_id AND p2.player_id = pms.player_id) AND NOT is_out),
               count(*) FILTER (WHERE runs_scored >= 50 AND runs_scored < 100)::int,
               count(*) FILTER (WHERE runs_scored >= 100)::int,
+              count(*) FILTER (WHERE runs_scored >= 30 AND runs_scored < 50)::int,
+              count(*) FILTER (WHERE runs_scored >= 20 AND runs_scored < 30)::int,
               sum(fours)::int, sum(sixes)::int,
               count(*) FILTER (WHERE batted AND is_out AND runs_scored = 0)::int,
               count(*) FILTER (WHERE bowled)::int,
@@ -354,7 +356,9 @@ export class StatsService {
                FROM player_match_stats p3
                WHERE p3.tournament_id = pms.tournament_id AND p3.player_id = pms.player_id AND p3.bowled
                ORDER BY p3.wickets_taken DESC, p3.runs_conceded ASC LIMIT 1),
+              count(*) FILTER (WHERE wickets_taken >= 2 AND wickets_taken < 3)::int,
               count(*) FILTER (WHERE wickets_taken >= 3 AND wickets_taken < 5)::int,
+              count(*) FILTER (WHERE wickets_taken >= 4 AND wickets_taken < 5)::int,
               count(*) FILTER (WHERE wickets_taken >= 5)::int,
               sum(maidens)::int, sum(catches)::int, sum(stumpings)::int, sum(run_outs)::int,
               sum(mvp_points)
