@@ -424,7 +424,7 @@ export class CatalogService {
                 sum(pcs.four_wkt_hauls)::int AS four_wkt_hauls,
                 sum(pcs.three_wkt_hauls)::int AS three_wkt_hauls,
                 sum(pcs.two_wkt_hauls)::int AS two_wkt_hauls,
-                max(pcs.best_bowling) AS best_bowling,
+                (array_agg(pcs.best_bowling) FILTER (WHERE pcs.best_bowling IS NOT NULL))[1] AS best_bowling,
                 CASE WHEN sum(pcs.balls_bowled) > 0
                      THEN round(sum(pcs.runs_conceded)::numeric * 6 / sum(pcs.balls_bowled), 2) END AS economy,
                 CASE WHEN sum(pcs.wickets_taken) > 0
