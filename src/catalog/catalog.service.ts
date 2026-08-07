@@ -389,7 +389,18 @@ export class CatalogService {
         `SELECT p.id AS player_id, p.full_name, p.photo_url, ${lastTeam} AS team_short_name,
                 sum(pcs.matches_played)::int AS matches_played,
                 sum(pcs.runs_scored)::int AS runs_scored,
+                sum(pcs.innings_batted)::int AS innings_batted,
+                sum(pcs.not_outs)::int AS not_outs,
                 max(pcs.highest_score)::int AS highest_score,
+                sum(pcs.balls_faced)::int AS balls_faced,
+                sum(pcs.hundreds)::int AS hundreds,
+                sum(pcs.fifties)::int AS fifties,
+                sum(pcs.thirties)::int AS thirties,
+                sum(pcs.twenties)::int AS twenties,
+                sum(pcs.fours)::int AS fours,
+                sum(pcs.sixes)::int AS sixes,
+                CASE WHEN sum(pcs.innings_batted - pcs.not_outs) > 0
+                     THEN round(sum(pcs.runs_scored)::numeric / (sum(pcs.innings_batted) - sum(pcs.not_outs)), 2) END AS batting_average,
                 CASE WHEN sum(pcs.balls_faced) > 0
                      THEN round(sum(pcs.runs_scored)::numeric * 100 / sum(pcs.balls_faced), 1) END AS strike_rate
          FROM player_career_stats pcs JOIN players p ON p.id = pcs.player_id
@@ -405,8 +416,20 @@ export class CatalogService {
         `SELECT p.id AS player_id, p.full_name, p.photo_url, ${lastTeam} AS team_short_name,
                 sum(pcs.matches_played)::int AS matches_played,
                 sum(pcs.wickets_taken)::int AS wickets_taken,
+                sum(pcs.innings_bowled)::int AS innings_bowled,
+                sum(pcs.balls_bowled)::int AS balls_bowled,
+                sum(pcs.runs_conceded)::int AS runs_conceded,
+                sum(pcs.maidens)::int AS maidens,
+                sum(pcs.five_wkt_hauls)::int AS five_wkt_hauls,
+                sum(pcs.four_wkt_hauls)::int AS four_wkt_hauls,
+                sum(pcs.three_wkt_hauls)::int AS three_wkt_hauls,
+                sum(pcs.two_wkt_hauls)::int AS two_wkt_hauls,
                 CASE WHEN sum(pcs.balls_bowled) > 0
-                     THEN round(sum(pcs.runs_conceded)::numeric * 6 / sum(pcs.balls_bowled), 2) END AS economy
+                     THEN round(sum(pcs.runs_conceded)::numeric * 6 / sum(pcs.balls_bowled), 2) END AS economy,
+                CASE WHEN sum(pcs.wickets_taken) > 0
+                     THEN round(sum(pcs.runs_conceded)::numeric / sum(pcs.wickets_taken), 2) END AS bowling_average,
+                CASE WHEN sum(pcs.wickets_taken) > 0
+                     THEN round(sum(pcs.balls_bowled)::numeric / sum(pcs.wickets_taken), 1) END AS strike_rate
          FROM player_career_stats pcs JOIN players p ON p.id = pcs.player_id
          WHERE p.deleted_at IS NULL
          GROUP BY p.id, p.full_name, p.photo_url
