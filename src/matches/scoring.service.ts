@@ -2000,7 +2000,12 @@ export class ScoringService {
     let rrr: number | null = null;
     if (innings.target_runs !== null && innings.max_overs !== null) {
       const ballsLeft = Number(innings.max_overs) * bpo - innings.legal_balls;
-      rrr = ballsLeft > 0 ? +(((innings.target_runs - innings.total_runs) * bpo) / ballsLeft).toFixed(2) : null;
+      // Runs still needed floors at 0: once the target is passed the chase is
+      // over, and a "required rate" of -2.25 is meaningless. Balls can remain
+      // (a chase won with overs to spare), so this survives into the completed
+      // match's stored summary unless clamped here.
+      const runsNeeded = Math.max(0, innings.target_runs - innings.total_runs);
+      rrr = ballsLeft > 0 ? +((runsNeeded * bpo) / ballsLeft).toFixed(2) : null;
     }
     return {
       batting_team: innings.short_name,

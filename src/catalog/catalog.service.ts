@@ -442,13 +442,28 @@ export class CatalogService {
     ).rows;
     const mvp = (
       await this.pool.query(
+        // won/lost/win_pct and player_of_match_awards mirror playerRecord() and
+        // the profile's award count, so the board and a player's own page can
+        // never disagree. Only decided matches count towards the percentage —
+        // ties and no-results sit in `played` but win nothing.
         `SELECT p.id AS player_id, p.full_name, p.photo_url, ${lastTeam} AS team_short_name,
                 count(*)::int AS matches_played,
+                count(*) FILTER (WHERE m.winner_team_id = pms.team_id)::int AS won,
+                count(*) FILTER (WHERE m.result_type = 'win'
+                                   AND m.winner_team_id IS DISTINCT FROM pms.team_id)::int AS lost,
+                count(*) FILTER (WHERE m.result_type = 'tie')::int AS tied,
+                count(*) FILTER (WHERE m.result_type IN ('no_result','abandoned'))::int AS no_result,
+                CASE WHEN count(*) FILTER (WHERE m.result_type = 'win') > 0
+                     THEN round(count(*) FILTER (WHERE m.winner_team_id = pms.team_id)::numeric * 100
+                                / count(*) FILTER (WHERE m.result_type = 'win'), 1) END AS win_pct,
+                count(*) FILTER (WHERE m.player_of_match_id = pms.player_id)::int AS player_of_match_awards,
                 -- A negative career total is shown as 0, but the ranking uses the
                 -- real figure so two players sitting on 0 still order by how far
                 -- below they actually are.
                 round(greatest(sum(pms.mvp_points), 0), 2) AS mvp_points
-         FROM player_match_stats pms JOIN players p ON p.id = pms.player_id
+         FROM player_match_stats pms
+         JOIN players p ON p.id = pms.player_id
+         JOIN matches m ON m.id = pms.match_id
          WHERE p.deleted_at IS NULL AND pms.mvp_points IS NOT NULL
          GROUP BY p.id, p.full_name, p.photo_url
          HAVING sum(pms.mvp_points) > 0

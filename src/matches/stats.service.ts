@@ -481,9 +481,18 @@ export class StatsService {
     for (const player_id of playerIds) {
       await client.query(`DELETE FROM player_career_stats WHERE player_id = $1`, [player_id]);
       await client.query(
+        // Every counter here must stay in step with rebuildTournamentStats —
+        // the same player is shown from player_career_stats on /players and
+        // from player_tournament_stats on a tournament's Top Performers, so a
+        // differing FILTER shows up as the same player with two duck counts.
+        // Omitting a column is worse than getting it wrong: this INSERT follows
+        // a DELETE, so anything left out silently resets to its DEFAULT 0 on
+        // every finalize.
         `INSERT INTO player_career_stats (player_id, format_family, matches_played, innings_batted,
-           runs_scored, balls_faced, not_outs, highest_score, fifties, hundreds, fours, sixes,
-           innings_bowled, balls_bowled, runs_conceded, wickets_taken, best_bowling, five_wkt_hauls,
+           runs_scored, balls_faced, not_outs, highest_score, fifties, hundreds, thirties, twenties,
+           fours, sixes, ducks,
+           innings_bowled, balls_bowled, runs_conceded, wickets_taken, best_bowling,
+           two_wkt_hauls, three_wkt_hauls, four_wkt_hauls, five_wkt_hauls, maidens,
            catches, stumpings, run_outs)
          SELECT pms.player_id,
                 CASE coalesce(f.slug::text, 'custom')
@@ -493,15 +502,25 @@ export class StatsService {
                 sum(pms.runs_scored)::int, sum(pms.balls_faced)::int,
                 count(*) FILTER (WHERE pms.batted AND NOT pms.is_out)::int,
                 coalesce(max(pms.runs_scored),0)::int,
-                count(*) FILTER (WHERE pms.runs_scored BETWEEN 50 AND 99)::int,
+                count(*) FILTER (WHERE pms.runs_scored >= 50 AND pms.runs_scored < 100)::int,
                 count(*) FILTER (WHERE pms.runs_scored >= 100)::int,
+                count(*) FILTER (WHERE pms.runs_scored >= 30 AND pms.runs_scored < 50)::int,
+                count(*) FILTER (WHERE pms.runs_scored >= 20 AND pms.runs_scored < 30)::int,
                 sum(pms.fours)::int, sum(pms.sixes)::int,
+                -- A duck is being DISMISSED for 0 — a not-out 0 is not one.
+                -- Same filter as rebuildTournamentStats, so a player's duck
+                -- count agrees on /players and on a tournament's Top Performers.
+                count(*) FILTER (WHERE pms.batted AND pms.is_out AND pms.runs_scored = 0)::int,
                 count(*) FILTER (WHERE pms.bowled)::int,
                 sum(pms.balls_bowled)::int, sum(pms.runs_conceded)::int, sum(pms.wickets_taken)::int,
                 (SELECT jsonb_build_object('wickets', p3.wickets_taken, 'runs', p3.runs_conceded)
                  FROM player_match_stats p3 WHERE p3.player_id = pms.player_id AND p3.bowled
                  ORDER BY p3.wickets_taken DESC, p3.runs_conceded ASC LIMIT 1),
+                count(*) FILTER (WHERE pms.wickets_taken >= 2 AND pms.wickets_taken < 3)::int,
+                count(*) FILTER (WHERE pms.wickets_taken >= 3 AND pms.wickets_taken < 5)::int,
+                count(*) FILTER (WHERE pms.wickets_taken >= 4 AND pms.wickets_taken < 5)::int,
                 count(*) FILTER (WHERE pms.wickets_taken >= 5)::int,
+                sum(pms.maidens)::int,
                 sum(pms.catches)::int, sum(pms.stumpings)::int, sum(pms.run_outs)::int
          FROM player_match_stats pms
          JOIN matches m ON m.id = pms.match_id
@@ -576,9 +595,38 @@ export class StatsService {
       sr: 'strike_rate DESC NULLS LAST',
       economy: 'economy ASC NULLS LAST',
     };
+    // The view carries only playing figures, so the win/loss record and the
+    // player-of-the-match count are derived alongside it rather than migrating
+    // the view. Same FILTERs as CatalogService.playerRecord(), scoped to this
+    // tournament, so a player's row agrees with their profile page.
     const rows = (
       await this.pool.query(
-        `SELECT * FROM v_player_tournament_leaderboard WHERE tournament_id = $1
+        `WITH record AS (
+           SELECT pms.player_id,
+                  count(*) FILTER (WHERE m.winner_team_id = pms.team_id)::int AS won,
+                  count(*) FILTER (WHERE m.result_type = 'win'
+                                     AND m.winner_team_id IS DISTINCT FROM pms.team_id)::int AS lost,
+                  count(*) FILTER (WHERE m.result_type = 'tie')::int AS tied,
+                  count(*) FILTER (WHERE m.result_type IN ('no_result','abandoned'))::int AS no_result,
+                  CASE WHEN count(*) FILTER (WHERE m.result_type = 'win') > 0
+                       THEN round(count(*) FILTER (WHERE m.winner_team_id = pms.team_id)::numeric * 100
+                                  / count(*) FILTER (WHERE m.result_type = 'win'), 1) END AS win_pct,
+                  count(*) FILTER (WHERE m.player_of_match_id = pms.player_id)::int AS player_of_match_awards
+           FROM player_match_stats pms
+           JOIN matches m ON m.id = pms.match_id
+           WHERE pms.tournament_id = $1
+           GROUP BY pms.player_id
+         )
+         SELECT v.*,
+                coalesce(r.won, 0) AS won,
+                coalesce(r.lost, 0) AS lost,
+                coalesce(r.tied, 0) AS tied,
+                coalesce(r.no_result, 0) AS no_result,
+                r.win_pct,
+                coalesce(r.player_of_match_awards, 0) AS player_of_match_awards
+         FROM v_player_tournament_leaderboard v
+         LEFT JOIN record r ON r.player_id = v.player_id
+         WHERE v.tournament_id = $1
          ORDER BY ${order[metric] ?? order.runs} LIMIT 50`,
         [tournamentId],
       )
