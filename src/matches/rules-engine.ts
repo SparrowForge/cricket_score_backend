@@ -133,10 +133,28 @@ export function applyBall(state: LiveInningsState, ev: BallEvent, rules: FormatR
     next.bowlerLegalBalls[ev.bowlerId] = (next.bowlerLegalBalls[ev.bowlerId] ?? 0) + 1;
   }
 
+  // Last man standing: no reserve batter left in the squad to send in — only
+  // reachable when wickets_to_fall was explicitly raised to players_per_side
+  // ("last man batting"). The sole survivor plays on alone at both ends
+  // rather than being prompted for a replacement that doesn't exist.
+  // retired_hurt is excluded — that's a temporary substitute, not a real
+  // dismissal, and doesn't consume the squad's last reserve slot the same way.
+  let lastManStanding = false;
   if (ev.wicket) {
     if (ev.wicket.type !== 'retired_hurt') next.totalWickets += 1;
     else next.battersRetiredHurt.push(ev.wicket.dismissedPlayerId);
-    effects.push({ kind: 'new_batter_required', dismissedId: ev.wicket.dismissedPlayerId });
+
+    const noReserveLeft = ev.wicket.type !== 'retired_hurt'
+      && next.totalWickets >= rules.players_per_side - 1;
+    lastManStanding = noReserveLeft && next.totalWickets < rules.wickets_to_fall;
+
+    if (lastManStanding) {
+      const survivorId = ev.wicket.dismissedPlayerId === state.strikerId ? state.nonStrikerId : state.strikerId;
+      next.strikerId = survivorId;
+      next.nonStrikerId = survivorId;
+    } else {
+      effects.push({ kind: 'new_batter_required', dismissedId: ev.wicket.dismissedPlayerId });
+    }
   }
 
   // Strike rotation: use a deterministic matrix for run-outs; normal rotation otherwise.
@@ -150,7 +168,12 @@ export function applyBall(state: LiveInningsState, ev: BallEvent, rules: FormatR
   // the dismissed id is parked in the fallen end's slot as a placeholder;
   // newBatter() swaps that exact slot for the replacement, which drops them on
   // the correct end without needing to re-derive any of this.
-  if (ev.wicket?.type === 'run_out' && ev.wicket.wicketBrokenEnd) {
+  //
+  // Last man standing skips this entirely — both ends already point at the
+  // sole survivor above, and there's no incoming batter to place.
+  if (lastManStanding) {
+    // no-op: survivor already occupies both ends
+  } else if (ev.wicket?.type === 'run_out' && ev.wicket.wicketBrokenEnd) {
     const dismissedId = ev.wicket.dismissedPlayerId;
     const survivorId = dismissedId === state.strikerId ? state.nonStrikerId : state.strikerId;
     if (ev.wicket.wicketBrokenEnd === 'striker_end') {
