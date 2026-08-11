@@ -25,6 +25,24 @@ const APPLIED_EVENT_ID_HISTORY = 40;
 type ForfeitEffect = { kind: 'innings_forfeited' };
 
 /**
+ * The "A 34(21), B 12(9)" half of an over summary.
+ *
+ * Under last-man-standing (wickets_to_fall == players_per_side) the engine puts
+ * the sole survivor in BOTH crease slots, so naively printing striker then
+ * non-striker renders the same player twice. Collapse to one entry in that case.
+ * The web parser anchors the bowler figures on the "O.B-M-R-W" pattern and takes
+ * whatever precedes them as the batter line, so a shorter line is safe.
+ */
+const creaseLine = (
+  striker: { name: string; runs: number; balls: number },
+  nonStriker: { name: string; runs: number; balls: number },
+  sameEnd: boolean,
+): string =>
+  sameEnd
+    ? `${striker.name} ${striker.runs}(${striker.balls}) — last man batting`
+    : `${striker.name} ${striker.runs}(${striker.balls}), ${nonStriker.name} ${nonStriker.runs}(${nonStriker.balls})`;
+
+/**
  * Scoring engine over Postgres.
  * Concurrency: the match row is SELECT … FOR UPDATE for every mutation, and
  * clients pass expected_seq (optimistic check) + client_event_id (idempotency),
@@ -569,7 +587,7 @@ export class ScoringService {
                (isWicketMaiden ? 'WICKET MAIDEN! '
                  : isMaidenOver ? 'Maiden over! '
                  : overWickets > 0 ? `${overWickets} WICKET${overWickets > 1 ? 'S' : ''}! ` : '') +
-               `${strikerCard.name} ${strikerCard.runs}(${strikerCard.balls}), ${nonStrikerCard.name} ${nonStrikerCard.runs}(${nonStrikerCard.balls}). ` +
+               `${creaseLine(strikerCard, nonStrikerCard, post.strikerId === post.nonStrikerId)}. ` +
                `${bowl.name} ${bowlerFigures}`,
              isMaidenOver || overWickets > 0],
           );
@@ -1556,7 +1574,7 @@ export class ScoringService {
                (isWicketMaiden ? 'WICKET MAIDEN! '
                  : isMaidenOver ? 'Maiden over! '
                  : overWickets > 0 ? `${overWickets} WICKET${overWickets > 1 ? 'S' : ''}! ` : '') +
-               `${strikerCard.name} ${strikerCard.runs}(${strikerCard.balls}), ${nonStrikerCard.name} ${nonStrikerCard.runs}(${nonStrikerCard.balls}). ` +
+               `${creaseLine(strikerCard, nonStrikerCard, engine.strikerId === engine.nonStrikerId)}. ` +
                `${bowl.name} ${bowlerFigures}`,
              isMaidenOver || overWickets > 0,
              tsFor(overTs, b), ballTsForOver],

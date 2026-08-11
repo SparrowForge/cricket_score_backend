@@ -454,7 +454,12 @@ export class MatchesService {
           if (current) partnerships.push(current);
           current = {
             key, innings: inn.seq, batting_team: inn.batting_team,
-            batters: [b.striker, b.non_striker].sort(), runs: 0, balls: 0,
+            // Under last-man-standing both crease slots hold the same player,
+            // so the "pair" is one batter — don't list them twice.
+            batters: b.striker_id === b.non_striker_id
+              ? [b.striker]
+              : [b.striker, b.non_striker].sort(),
+            runs: 0, balls: 0,
             wicket_number: wicketNo + 1, unbeaten: true,
           };
         }
