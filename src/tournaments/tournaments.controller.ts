@@ -82,6 +82,34 @@ class ConfirmFixturesDto {
   fixtures!: DraftFixtureDto[];
 }
 
+/** Tournament-wide match settings — stored as `rule_overrides`, frozen onto every fixture. */
+class MatchSettingsDto {
+  @IsOptional() @IsInt() @Min(1) @Max(500) overs_per_innings?: number;
+  @IsOptional() @IsInt() @Min(2) @Max(15) players_per_side?: number;
+  /** Derived from the last-single-batter switch, not typed in directly. */
+  @IsOptional() @IsInt() @Min(1) @Max(15) wickets_to_fall?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(500) max_overs_per_bowler?: number;
+  /** Alternative to `wickets_to_fall`: on = the last batter carries on alone. */
+  @IsOptional() @IsBoolean() allow_last_single_batter?: boolean;
+  @IsOptional() @IsObject() no_ball?: { free_hit?: boolean };
+  @IsOptional() @IsObject() dls?: { enabled?: boolean };
+}
+
+class GenerateMatchesDto {
+  @IsOptional() @IsObject() @ValidateNested() @Type(() => MatchSettingsDto) match_settings?: MatchSettingsDto;
+  /** Times each pair meets: 3 teams × 3 = A-B, A-C, B-C three times each = 9. */
+  @IsInt() @Min(1) @Max(20) matches_per_pair!: number;
+  /** Required to replace fixtures that already exist (409 without it). */
+  @IsOptional() @IsBoolean() overwrite?: boolean;
+  /** Return the fixture list without saving settings or creating matches. */
+  @IsOptional() @IsBoolean() preview?: boolean;
+  @IsOptional() @IsDateString() start_date?: string;
+  /** ISO weekdays 1(Mon)–7(Sun). Anything outside that never matches a date. */
+  @IsOptional() @IsArray() @IsInt({ each: true }) @Min(1, { each: true }) @Max(7, { each: true }) match_days?: number[];
+  @IsOptional() @IsInt() @Min(1) matches_per_day?: number;
+  @IsOptional() @IsArray() @IsUUID('4', { each: true }) venue_ids?: string[];
+}
+
 @ApiTags('Tournaments')
 @Controller()
 export class TournamentsController {
@@ -185,6 +213,24 @@ export class TournamentsController {
   ) {
     await this.access.assertTournamentOrgMember(id, user);
     return this.tournaments.generate(id, { ...dto, legs: dto.legs ?? 1 } as any);
+  }
+
+  /**
+   * One-shot setup used by the tournament screen: save the match settings and
+   * create the round-robin fixtures that play by them, in one transaction.
+   *
+   * 400 carries `{ fields }` for inline errors; 409 `MATCHES_EXIST` means the
+   * caller must confirm and retry with `overwrite: true`.
+   */
+  @Post('tournaments/:id/generate-matches')
+  @UseGuards(JwtAuthGuard)
+  async generateMatches(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: GenerateMatchesDto,
+  ) {
+    await this.access.assertTournamentPermission(id, user, 'tournament:update');
+    return this.tournaments.generateMatches(id, dto);
   }
 
   /** Persist reviewed draft fixtures as scheduled matches. */

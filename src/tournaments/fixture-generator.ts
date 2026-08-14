@@ -6,7 +6,7 @@
 
 export interface FixtureConfig {
   type: 'round_robin' | 'knockout' | 'hybrid';
-  legs: 1 | 2;                       // double round robin support
+  legs: number;                      // repeats of the full round robin (2 = home & away)
   knockoutFrom?: number;             // hybrid: top-N advance (per table, or per group)
   groups?: { id: string; teamIds: string[] }[];
   startDate: string;                 // ISO date
@@ -14,6 +14,14 @@ export interface FixtureConfig {
   matchesPerDay: number;
   venueIds: string[];
   maxMatches?: number;               // optional limit on number of matches to generate
+  /**
+   * Round robin only: how many times each pair meets. Overrides `legs`, and is
+   * the knob the tournament setup screen drives — "3" on a 3-team tournament
+   * means A-B, A-C and B-C are each played three times (9 matches), not a
+   * 3-match total. Unlike `maxMatches` it never truncates a round mid-way, so
+   * every team ends up with the same number of games.
+   */
+  matchesPerPair?: number;
 }
 
 export interface DraftFixture {
@@ -32,7 +40,10 @@ export function generateFixtures(teamIds: string[], cfg: FixtureConfig): DraftFi
 
   switch (cfg.type) {
     case 'round_robin': {
-      let pairs = roundRobin(teamIds, cfg.legs);
+      // `matchesPerPair` is just a wider `legs`: each extra leg is one more full
+      // round robin, so every pairing gains exactly one match and the home/away
+      // side alternates leg by leg.
+      let pairs = roundRobin(teamIds, Math.max(1, Math.trunc(cfg.matchesPerPair ?? cfg.legs ?? 1)));
       // Treat maxMatches as the exact number of league matches wanted. One full
       // round robin of N teams only yields N·(N−1)/2 games (just 1 for a 2-team
       // tournament), so when the admin asks for more — e.g. a best-of-3 between
@@ -68,8 +79,12 @@ export function generateFixtures(teamIds: string[], cfg: FixtureConfig): DraftFi
   return fixtures;
 }
 
-/** Circle method: fix team[0], rotate the rest. Handles odd counts via a bye. */
-function roundRobin(teamIds: (string | null)[], legs: 1 | 2) {
+/**
+ * Circle method: fix team[0], rotate the rest. Handles odd counts via a bye.
+ * Each leg is one full round robin; odd legs swap home and away so a pair that
+ * meets several times alternates sides instead of always batting the same way up.
+ */
+function roundRobin(teamIds: (string | null)[], legs: number) {
   const teams = teamIds.length % 2 === 0 ? [...teamIds] : [...teamIds, null /* bye */];
   const n = teams.length;
   const rounds: { teamAId: string | null; teamBId: string | null; stage: DraftFixture['stage'] }[] = [];
@@ -81,8 +96,8 @@ function roundRobin(teamIds: (string | null)[], legs: 1 | 2) {
       for (let i = 0; i < n / 2; i++) {
         const [a, b] = [lineup[i], lineup[n - 1 - i]];
         if (a === null || b === null) continue; // bye
-        rounds.push(leg === 0 ? { teamAId: a, teamBId: b, stage: 'league' }
-                              : { teamAId: b, teamBId: a, stage: 'league' }); // reverse home/away
+        rounds.push(leg % 2 === 0 ? { teamAId: a, teamBId: b, stage: 'league' }
+                                  : { teamAId: b, teamBId: a, stage: 'league' }); // reverse home/away
       }
       rot.unshift(rot.pop()!);
     }

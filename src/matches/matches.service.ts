@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import Redis from 'ioredis';
 import { Pool, PoolClient } from 'pg';
+import { deepMerge } from '../common/deep-merge';
 import { PG_POOL } from '../database/database.module';
 import { REDIS } from '../redis/redis.module';
 import { LiveStateService } from './live-state.service';
@@ -50,15 +51,9 @@ function dismissalText(w: Pick<WicketRow, 'wicket_type' | 'bowler_id' | 'fielder
   }
 }
 
-export function deepMerge(base: any, override: any): any {
-  if (override === null || override === undefined) return base;
-  if (typeof base !== 'object' || typeof override !== 'object' || Array.isArray(base) || Array.isArray(override)) {
-    return override;
-  }
-  const out: any = { ...base };
-  for (const key of Object.keys(override)) out[key] = deepMerge(base?.[key], override[key]);
-  return out;
-}
+// Moved to common/ once tournament fixture generation started freezing the same
+// resolved document; re-exported here so the existing importers don't move.
+export { deepMerge };
 
 @Injectable()
 export class MatchesService {
