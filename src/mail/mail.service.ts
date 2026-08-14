@@ -115,13 +115,18 @@ export class MailService {
     return this.transporter.verify();
   }
 
-  async send(to: string, subject: string, html: string, text?: string): Promise<boolean> {
-    if (this.resendKey) return this.sendOverHttp(to, subject, html, text);
+  /**
+   * `replyTo` matters for forwarded mail such as the contact form: the envelope
+   * sender has to stay the authenticated FROM_EMAIL (or SPF/DMARC rejects it),
+   * so the enquirer's address goes here instead and Reply just works.
+   */
+  async send(to: string, subject: string, html: string, text?: string, replyTo?: string): Promise<boolean> {
+    if (this.resendKey) return this.sendOverHttp(to, subject, html, text, replyTo);
     if (!this.host) {
       this.logger.error(`Cannot send "${subject}" to ${to}: SMTP_HOST is not configured.`);
       return false;
     }
-    const message = { from: this.from, to, subject, html, text };
+    const message = { from: this.from, to, subject, html, text, ...(replyTo ? { replyTo } : {}) };
 
     try {
       const transport = this.useFallback ? this.fallback : this.transporter;
@@ -158,7 +163,7 @@ export class MailService {
   }
 
   /** Deliver over HTTPS instead of SMTP — see `resendKey`. */
-  private async sendOverHttp(to: string, subject: string, html: string, text?: string): Promise<boolean> {
+  private async sendOverHttp(to: string, subject: string, html: string, text?: string, replyTo?: string): Promise<boolean> {
     try {
       const res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
@@ -166,7 +171,7 @@ export class MailService {
           Authorization: `Bearer ${this.resendKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ from: this.from, to: [to], subject, html, text }),
+        body: JSON.stringify({ from: this.from, to: [to], subject, html, text, ...(replyTo ? { reply_to: replyTo } : {}) }),
         signal: AbortSignal.timeout(SMTP_TIMEOUT_MS),
       });
       if (!res.ok) {
