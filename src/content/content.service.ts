@@ -1,14 +1,8 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
+import { CONTACT_INBOX } from '../common/contact-details';
 import { PG_POOL } from '../database/database.module';
 import { MailService } from '../mail/mail.service';
-
-/**
- * Public enquiry inbox. Overridable so a staging deploy does not mail the real
- * one; must stay in step with the address shown on the site
- * (`frontend/src/lib/contact.ts`).
- */
-const CONTACT_INBOX = process.env.CONTACT_EMAIL ?? 'contact@criclive-score.com';
 
 const CONTACT_SUBJECTS: Record<string, string> = {
   contact: 'Website enquiry',
@@ -286,6 +280,16 @@ export class ContentService {
       // authenticated FROM_EMAIL or SPF/DMARC rejects the message, so Reply
       // would otherwise go to the no-reply mailbox.
       dto.email,
+    );
+
+    // Autoresponder to the sender. Also fire-and-forget: an enquiry that
+    // reached us but whose receipt bounced is a far better outcome than a 500
+    // in front of someone who typed out their whole request.
+    void this.mail.sendContactAck(
+      dto.email,
+      dto.name,
+      CONTACT_SUBJECTS[dto.kind ?? 'contact'] ?? 'enquiry',
+      dto.message,
     );
     return res.rows[0];
   }

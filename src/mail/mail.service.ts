@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import type SMTPTransport from 'nodemailer/lib/smtp-transport';
+import { CONTACT_INBOX, CONTACT_PHONE } from '../common/contact-details';
 
 /**
  * Fail fast. Nodemailer's stock timeouts run to ~2 minutes, which on a host
@@ -238,6 +239,43 @@ export class MailService {
            border-radius:6px;text-decoration:none">Reset password</a></p>
         <p style="color:#666">If you didn't request this, you can safely ignore this email.</p>`),
       text,
+    );
+  }
+
+  /**
+   * Autoresponder for the public contact form: confirms to the sender that the
+   * enquiry arrived and what happens next.
+   *
+   * Reply-to is the staffed inbox, not the no-reply FROM address, so someone
+   * adding a detail after sending reaches a human. Their own message is quoted
+   * back so they have a record of what they asked.
+   */
+  async sendContactAck(to: string, name: string, what: string, message?: string): Promise<boolean> {
+    const text = [
+      `Hi ${name},`,
+      '',
+      `Thank you for contacting CricLive. We have received your ${what.toLowerCase()} and will get back to you within one working day.`,
+      '',
+      `If it is urgent, call us on ${CONTACT_PHONE} or reply to this email.`,
+      ...(message ? ['', 'Your message:', message] : []),
+      '',
+      '— The CricLive team',
+    ].join('\n');
+
+    return this.send(
+      to,
+      'Thanks for contacting CricLive 🏏',
+      this.layout(`
+        <h2>Thank you, ${escapeHtml(name)}!</h2>
+        <p>We have received your ${escapeHtml(what.toLowerCase())} and will get back to you
+           within one working day.</p>
+        <p>If it is urgent, call us on <b>${escapeHtml(CONTACT_PHONE)}</b> — or just reply to this email.</p>
+        ${message ? `<p style="color:#666;font-size:13px;margin-top:24px">Your message:</p>
+          <blockquote style="margin:0;padding:8px 14px;border-left:3px solid #16a34a;color:#444;
+            white-space:pre-wrap">${escapeHtml(message)}</blockquote>` : ''}
+        <p style="margin-top:24px">— The CricLive team</p>`),
+      text,
+      CONTACT_INBOX,
     );
   }
 
