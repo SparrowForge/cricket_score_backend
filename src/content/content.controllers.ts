@@ -49,11 +49,16 @@ class SettingDto {
 }
 
 class ContactDto {
-  @IsOptional() @IsIn(['contact', 'demo_request']) kind?: string;
+  @IsOptional() @IsIn(['contact', 'demo_request', 'schedule_request', 'pricing', 'support']) kind?: string;
   @IsString() @IsNotEmpty() @MaxLength(120) name!: string;
   @IsEmail() email!: string;
+  @IsOptional() @IsString() @MaxLength(40) phone?: string;
   @IsOptional() @IsString() @MaxLength(200) organization?: string;
+  /** Free text on purpose: "first weekend of March" is a useful answer too. */
+  @IsOptional() @IsString() @MaxLength(120) preferred_date?: string;
   @IsOptional() @IsString() @MaxLength(4000) message?: string;
+  /** Honeypot — hidden in the form, so anything here came from a bot. */
+  @IsOptional() @IsString() @MaxLength(200) website?: string;
 }
 
 // ---------------- News ----------------

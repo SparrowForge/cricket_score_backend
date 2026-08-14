@@ -14,7 +14,6 @@ import { SaasModule } from './saas/saas.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { MatchesModule } from './matches/matches.module';
-import { ContactModule } from './contact/contact.module';
 import { ContentModule } from './content/content.module';
 import { EngagementModule } from './engagement/engagement.module';
 import { HealthController } from './health/health.controller';
@@ -35,7 +34,6 @@ import { HealthController } from './health/health.controller';
     TournamentsModule,
     MatchesModule,
     ContentModule,
-    ContactModule,
     EngagementModule,
     RealtimeModule,
   ],

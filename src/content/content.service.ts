@@ -3,6 +3,24 @@ import { Pool } from 'pg';
 import { PG_POOL } from '../database/database.module';
 import { MailService } from '../mail/mail.service';
 
+/**
+ * Public enquiry inbox. Overridable so a staging deploy does not mail the real
+ * one; must stay in step with the address shown on the site
+ * (`frontend/src/lib/contact.ts`).
+ */
+const CONTACT_INBOX = process.env.CONTACT_EMAIL ?? 'contact@criclive-score.com';
+
+const CONTACT_SUBJECTS: Record<string, string> = {
+  contact: 'Website enquiry',
+  demo_request: 'Demo request',
+  schedule_request: 'Schedule request',
+  pricing: 'Pricing enquiry',
+  support: 'Support request',
+};
+
+const esc = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
 @Injectable()
 export class ContentService {
   constructor(
@@ -228,17 +246,46 @@ export class ContentService {
   }
 
   // ---------- contact ----------
-  async submitContact(dto: { kind?: string; name: string; email: string; organization?: string; message?: string }) {
+  async submitContact(dto: {
+    kind?: string; name: string; email: string; phone?: string;
+    organization?: string; preferred_date?: string; message?: string; website?: string;
+  }) {
+    // Bots fill every field they can see. Answer as if it went through — telling
+    // a scraper it was filtered only teaches it which field to leave alone.
+    if (dto.website?.trim()) return { id: null, created_at: new Date().toISOString() };
+
     const res = await this.pool.query(
-      `INSERT INTO contact_submissions (kind, name, email, organization, message)
-       VALUES (coalesce($1,'contact'),$2,$3,$4,$5) RETURNING id, created_at`,
-      [dto.kind ?? null, dto.name, dto.email, dto.organization ?? null, dto.message ?? null],
+      `INSERT INTO contact_submissions (kind, name, email, phone, organization, preferred_date, message)
+       VALUES (coalesce($1,'contact'),$2,$3,$4,$5,$6,$7) RETURNING id, created_at`,
+      [dto.kind ?? null, dto.name, dto.email, dto.phone ?? null,
+       dto.organization ?? null, dto.preferred_date ?? null, dto.message ?? null],
     );
-    // Notify the platform inbox; never blocks the response
+
+    const rows: [string, string | undefined][] = [
+      ['Email', dto.email],
+      ['Phone', dto.phone],
+      ['Club / league', dto.organization],
+      ['Preferred dates', dto.preferred_date],
+    ];
+    // Notify the public inbox; never blocks the response, and the row above is
+    // the durable record either way — a failed send loses the alert, not the
+    // enquiry (it stays in Admin → Contact submissions).
     void this.mail.send(
-      process.env.FROM_EMAIL!,
-      `New ${dto.kind === 'demo_request' ? 'demo request' : 'contact message'} — ${dto.name}`,
-      `<p><b>${dto.name}</b> (${dto.email}${dto.organization ? ', ' + dto.organization : ''})</p><p>${dto.message ?? ''}</p>`,
+      CONTACT_INBOX,
+      `[CricLive] ${CONTACT_SUBJECTS[dto.kind ?? 'contact'] ?? 'Website enquiry'} — ${dto.name}`,
+      `<h2>${esc(CONTACT_SUBJECTS[dto.kind ?? 'contact'] ?? 'Website enquiry')}</h2>
+       <p><b>${esc(dto.name)}</b></p>
+       <table style="border-collapse:collapse;font-size:14px">
+         ${rows.filter(([, v]) => v).map(([k, v]) =>
+           `<tr><td style="padding:4px 12px 4px 0;color:#666">${k}</td>
+                <td style="padding:4px 0;font-weight:600">${esc(v!)}</td></tr>`).join('')}
+       </table>
+       <p style="white-space:pre-wrap;margin-top:16px">${esc(dto.message ?? '')}</p>`,
+      [...rows.filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`), '', dto.message ?? ''].join('\n'),
+      // Reply-to is the enquirer: the envelope sender has to stay the
+      // authenticated FROM_EMAIL or SPF/DMARC rejects the message, so Reply
+      // would otherwise go to the no-reply mailbox.
+      dto.email,
     );
     return res.rows[0];
   }
