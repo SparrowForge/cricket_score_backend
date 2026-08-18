@@ -7,9 +7,10 @@ import { REDIS } from '../redis/redis.module';
 import { LiveStateService } from './live-state.service';
 import { StatsService } from './stats.service';
 
-// GET /matches/:id cache TTL. The key embeds the live-state seq, so a scored
-// ball always misses to a fresh key; the TTL only bounds staleness for
-// non-scoring edits (venue, officials, squad).
+// GET /matches/:id cache TTL. There is one key per match and
+// LiveStateService.syncAndPublish drops it on every post-commit change, so the
+// TTL is only a backstop for edits that never reach that path (venue,
+// officials, squad) — not the primary invalidation.
 const DETAIL_CACHE_TTL_S = 15;
 
 /** Scorecard dismissal line: 'caught Dhoni bowled Jadeja' | 'caught & bowled Jadeja' | 'run out (Jadeja)' | 'bowled Bumrah' … */
@@ -169,11 +170,19 @@ export class MatchesService {
   async get(id: string) {
     // Viewers refetch on every ball; collapse that read storm onto Redis.
     // Best-effort: any Redis failure falls through to Postgres.
+    //
+    // The key used to embed the live-state seq. That looked self-invalidating
+    // but was not: a status transition (scheduled → live) or a roster save
+    // rewrites the match row WITHOUT moving the seq, so the old key stayed a
+    // hit and the API served the pre-start snapshot for the whole TTL — which
+    // is why a freshly started gully match still reported 'scheduled' with no
+    // rules_snapshot. One key per match now, dropped by
+    // LiveStateService.syncAndPublish on every post-commit change.
     let cacheKey: string | null = null;
     try {
       const state = await this.redis.get(`match:${id}:state`);
       if (state) {
-        cacheKey = `match:${id}:detail:${JSON.parse(state).seq ?? 0}`;
+        cacheKey = this.live.detailKey(id);
         const hit = await this.redis.get(cacheKey);
         if (hit) return JSON.parse(hit);
       }

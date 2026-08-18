@@ -58,10 +58,51 @@ function check(label, cond, detail = '') {
   const P = [await mk('Gully Ayaan'), await mk('Gully Bilal'), await mk('Gully Chirag'), await mk('Gully Dev')];
   ok('players created', `${P.length}`);
 
+  // One squad of 4, plus a club player who is NOT in it — the roster picker
+  // must offer the squad only, and must still be able to reach the outsider.
+  const team = (await api('POST', `/orgs/${org.id}/teams`, {
+    name: 'Gully Squad', short_name: 'GSQ', slug: `gully-squad-${run}`,
+  })).data;
+  for (const p of P) await api('POST', `/teams/${team.id}/players`, { player_id: p.id });
+  const outsider = await mk('Gully Outsider');
+  ok('team created with a 4-player squad', team.short_name);
+
+  // ---- create: one team select is REQUIRED --------------------------------
+  const noTeam = await api('POST', `/orgs/${org.id}/rotation-matches`, {}, false);
+  check('creating without a team is rejected', noTeam.status === 400, `status ${noTeam.status}`);
+
+  const otherOrg = (await api('POST', '/orgs', {
+    name: 'E2E Other Club', slug: `e2e-club-other-${run}`,
+  })).data;
+  const otherTeam = (await api('POST', `/orgs/${otherOrg.id}/teams`, {
+    name: 'Other Squad', short_name: 'OSQ', slug: `other-squad-${run}`,
+  })).data;
+  const crossOrg = await api('POST', `/orgs/${org.id}/rotation-matches`, { team_id: otherTeam.id }, false);
+  check("another club's team is rejected", crossOrg.status === 400, `status ${crossOrg.status}`);
+
   // ---- create + roster ----------------------------------------------------
-  const match = (await api('POST', `/orgs/${org.id}/rotation-matches`, {})).data;
+  const match = (await api('POST', `/orgs/${org.id}/rotation-matches`, { team_id: team.id })).data;
   check('rotation match created', match.mode === 'rotation', `mode=${match.mode}`);
   check('no tournament required', match.tournament_id === null);
+  check('selected team is recorded', match.rotation_team_id === team.id);
+  check('but the team is NOT a playing side',
+    match.team_a_id !== team.id && match.team_b_id !== team.id,
+    'team_a/team_b stay synthetic, so gully stays out of team standings');
+
+  const teamList = (await api('GET', `/orgs/${org.id}/teams`)).data;
+  check('synthetic pool teams stay out of the club team list',
+    !teamList.some((t) => t.is_synthetic), `${teamList.length} team(s) listed`);
+
+  // ---- roster candidates come from the selected squad ----------------------
+  const cand = (await api('GET', `/matches/${match.id}/rotation/candidates`)).data;
+  check('candidates default to the selected squad',
+    cand.scope === 'team' && cand.players.length === 4, `${cand.players.length} from ${cand.scope}`);
+  check('a club player outside the squad is excluded',
+    !cand.players.some((p) => p.id === outsider.id));
+  const wide = (await api('GET', `/matches/${match.id}/rotation/candidates?scope=club`)).data;
+  check('scope=club widens to the whole club',
+    wide.scope === 'club' && wide.players.some((p) => p.id === outsider.id),
+    `${wide.players.length} club players`);
 
   const roster = (await api('PUT', `/matches/${match.id}/rotation/roster`, {
     player_ids: P.map((p) => p.id),
@@ -175,10 +216,14 @@ function check(label, cond, detail = '') {
     console.log(`   top: ${top.full_name ?? top.player_id} = ${top.total_points}`);
   }
 
-  const profile = (await api('GET', `/players/${P[0].id}/stats`, null, false)).data;
-  const fams = JSON.stringify(profile).includes('gully');
-  check("career stats land in format_family='gully'", fams,
-    fams ? '' : 'no gully family found in the profile payload');
+  // The profile — and the career_stats it carries — is GET /players/:id.
+  // There is no /players/:id/stats route; asking for one 404s, which used to
+  // make this check fail for a reason that had nothing to do with gully.
+  const profile = (await api('GET', `/players/${P[0].id}`)).data;
+  const gullyRow = (profile.career_stats ?? []).find((c) => c.format_family === 'gully');
+  check("career stats land in format_family='gully'", !!gullyRow,
+    gullyRow ? `${gullyRow.runs_scored} runs, ${gullyRow.wickets_taken} wkts`
+             : `families: ${(profile.career_stats ?? []).map((c) => c.format_family).join(',') || 'none'}`);
 
   console.log('');
   if (failures) {

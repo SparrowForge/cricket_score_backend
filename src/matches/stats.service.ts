@@ -134,10 +134,22 @@ export class StatsService {
          WHERE i.match_id = $1 AND ce.fielder_player_id IS NOT NULL
          GROUP BY ce.fielder_player_id
        ),
+       -- ONE row per player. In a standard match a player only ever appears
+       -- under a single team_id, so this is a no-op there. In rotation (gully)
+       -- mode the same person bats for the synthetic POOL team and bowls for
+       -- the synthetic FIELD team, so a UNION over (player_id, team_id) yields
+       -- two rows for one player and the insert trips
+       -- player_match_stats_match_id_player_id_key — which rolled the whole
+       -- finalize transaction back and left every gully match without stats,
+       -- MVP or career rows.
        all_players AS (
-         SELECT player_id, team_id FROM batting
-         UNION SELECT player_id, team_id FROM bowling
-         UNION SELECT player_id, team_id FROM fielding
+         SELECT player_id, (array_agg(team_id ORDER BY src))[1] AS team_id
+         FROM (
+           SELECT player_id, team_id, 1 AS src FROM batting
+           UNION ALL SELECT player_id, team_id, 2 FROM bowling
+           UNION ALL SELECT player_id, team_id, 3 FROM fielding
+         ) roles
+         GROUP BY player_id
        )
        INSERT INTO player_match_stats (match_id, tournament_id, player_id, team_id,
          batted, runs_scored, balls_faced, fours, sixes, is_out, dismissal_type, batting_position,
@@ -150,12 +162,17 @@ export class StatsService {
               bo.player_id IS NOT NULL, coalesce(bo.balls_bowled,0), coalesce(bo.runs_conceded,0),
               coalesce(bo.wickets,0), coalesce(m.maidens,0), coalesce(bo.wides,0), coalesce(bo.no_balls,0), coalesce(bo.dots,0),
               coalesce(f.catches,0), coalesce(f.stumpings,0), coalesce(f.run_outs,0)
+       -- Joined on player_id alone, deliberately: batting/bowling/fielding are
+       -- each already unique per player (a player has one team in a standard
+       -- match), and in rotation mode ap.team_id is the batting side while the
+       -- bowling/fielding rows carry the FIELD team, so matching on team_id
+       -- would silently zero out every gully bowling and fielding figure.
        FROM all_players ap
-       LEFT JOIN batting bat ON bat.player_id = ap.player_id AND bat.team_id = ap.team_id
+       LEFT JOIN batting bat ON bat.player_id = ap.player_id
        LEFT JOIN dismissals d ON d.player_id = ap.player_id
-       LEFT JOIN bowling bo ON bo.player_id = ap.player_id AND bo.team_id = ap.team_id
+       LEFT JOIN bowling bo ON bo.player_id = ap.player_id
        LEFT JOIN maidens m ON m.player_id = ap.player_id
-       LEFT JOIN fielding f ON f.player_id = ap.player_id AND f.team_id = ap.team_id`,
+       LEFT JOIN fielding f ON f.player_id = ap.player_id`,
       [match.id, match.tournament_id],
     );
   }

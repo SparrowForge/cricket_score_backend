@@ -205,6 +205,12 @@ class EditBallDto {
 
 // ---- rotation (gully) mode ----
 class CreateRotationMatchDto {
+  /**
+   * The one team the game is being played by. Required — it selects the squad
+   * the roster picker offers. Not a playing side: team_a/team_b stay synthetic
+   * so a gully result never reaches team standings, form or head-to-head.
+   */
+  @IsUUID() team_id!: string;
   @IsOptional() @IsDateString() scheduled_start?: string;
   @IsOptional() @IsUUID() venue_id?: string;
   @IsOptional() @IsInt() match_number?: number;
@@ -269,6 +275,18 @@ export class MatchesController {
   ) {
     await this.access.assertOrgMember(orgId, user);
     return this.rotation.createMatch(orgId, dto);
+  }
+
+  /** The players the roster picker offers: the selected team's squad, or the whole club with ?scope=club. */
+  @Get('matches/:id/rotation/candidates')
+  @UseGuards(JwtAuthGuard)
+  async rotationCandidates(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Query('scope') scope?: string,
+  ) {
+    await this.access.assertMatchOrgMember(id, user);
+    return this.rotation.rosterCandidates(id, scope === 'club');
   }
 
   /** Pick the pool, the active count and the overs per batter. Idempotent; locked once live. */

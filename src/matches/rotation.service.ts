@@ -175,27 +175,90 @@ export class RotationService {
    * Create a standalone rotation match. Deliberately NOT MatchesService.createManual:
    * that requires a tournament and asserts both teams are attached to it, neither
    * of which means anything for a pickup game in a car park.
+   *
+   * `team_id` is the ONE team the game is being played by, and it is required:
+   * it decides which squad the roster screen offers. It is stored on
+   * rotation_team_id, never on team_a_id/team_b_id — those stay synthetic so a
+   * gully result never reaches team standings, form or head-to-head (see
+   * migration 26).
    */
-  async createMatch(orgId: string, dto: { scheduled_start?: string; venue_id?: string; match_number?: number }) {
+  async createMatch(orgId: string, dto: {
+    team_id: string; scheduled_start?: string; venue_id?: string; match_number?: number;
+  }) {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+
+      // A team from another org — or one of the hidden pool rows — is not a
+      // squad anyone can pick.
+      const team = (await client.query(
+        `SELECT id, name, is_synthetic FROM teams
+          WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL`,
+        [dto.team_id, orgId],
+      )).rows[0];
+      if (!team) throw new BadRequestException('That team does not exist in this club');
+      if (team.is_synthetic) {
+        throw new BadRequestException('That is an internal gully team, not a squad you can pick');
+      }
+
       const { poolId, fieldId } = await this.ensurePoolTeams(client, orgId);
       const res = await client.query(
         `INSERT INTO matches (tournament_id, organization_id, mode, match_number, stage,
-                              team_a_id, team_b_id, venue_id, scheduled_start)
-         VALUES (NULL, $1, 'rotation', $2, 'custom', $3, $4, $5, coalesce($6::timestamptz, now()))
+                              team_a_id, team_b_id, rotation_team_id, venue_id, scheduled_start)
+         VALUES (NULL, $1, 'rotation', $2, 'custom', $3, $4, $5, $6, coalesce($7::timestamptz, now()))
          RETURNING *`,
-        [orgId, dto.match_number ?? null, poolId, fieldId, dto.venue_id ?? null, dto.scheduled_start ?? null],
+        [orgId, dto.match_number ?? null, poolId, fieldId, team.id,
+         dto.venue_id ?? null, dto.scheduled_start ?? null],
       );
       await client.query('COMMIT');
-      return res.rows[0];
+      return { ...res.rows[0], rotation_team_name: team.name };
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
       throw err;
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * The squad the roster picker offers: the selected team's active players.
+   *
+   * `includeClub` widens it to every player in the org — a pickup game is
+   * exactly the situation where somebody's brother turns up and has to be given
+   * a bat, and a two-man squad would otherwise be a dead end.
+   */
+  async rosterCandidates(matchId: string, includeClub = false) {
+    const match = (await this.pool.query(
+      `SELECT m.id, m.mode, m.organization_id, m.rotation_team_id, t.name AS team_name
+         FROM matches m LEFT JOIN teams t ON t.id = m.rotation_team_id
+        WHERE m.id = $1`,
+      [matchId],
+    )).rows[0];
+    if (!match) throw new NotFoundException('Match not found');
+    this.assertRotation(match);
+
+    // Matches created before migration 26 have no team; fall back to the club
+    // rather than showing an empty picker.
+    const squadOnly = !!match.rotation_team_id && !includeClub;
+    const players = (await this.pool.query(
+      squadOnly
+        ? `SELECT p.id, p.full_name, p.primary_role, p.photo_url, tp.jersey_number
+             FROM team_players tp JOIN players p ON p.id = tp.player_id
+            WHERE tp.team_id = $1 AND tp.active_to IS NULL AND p.deleted_at IS NULL
+            ORDER BY tp.jersey_number NULLS LAST, p.full_name`
+        : `SELECT p.id, p.full_name, p.primary_role, p.photo_url, NULL::smallint AS jersey_number
+             FROM players p
+            WHERE p.organization_id = $1 AND p.deleted_at IS NULL
+            ORDER BY p.full_name`,
+      [squadOnly ? match.rotation_team_id : match.organization_id],
+    )).rows;
+
+    return {
+      team_id: match.rotation_team_id,
+      team_name: match.team_name ?? null,
+      scope: squadOnly ? 'team' : 'club',
+      players,
+    };
   }
 
   // ----------------------------------------------------------------- roster
@@ -213,7 +276,7 @@ export class RotationService {
     shuffle_order?: boolean;
     house_rules?: Record<string, any>;
   }) {
-    return this.withMatch(matchId, async (client, match) => {
+    const out = await this.withMatch(matchId, async (client, match) => {
       this.assertRotation(match);
       if (match.status !== 'scheduled') {
         throw new BadRequestException(
@@ -308,6 +371,11 @@ export class RotationService {
         warnings,
       };
     });
+    // The roster rewrites rules_snapshot, which the scorer console and every
+    // watching client read. Publishing here also drops the cached match detail,
+    // so a re-saved roster is visible immediately rather than after the TTL.
+    await this.live.syncAndPublish(matchId, 'status', { transition: 'rotation_roster' });
+    return out;
   }
 
   // ------------------------------------------------------------------ start

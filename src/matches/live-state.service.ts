@@ -30,6 +30,12 @@ export class LiveStateService {
   private stateKey(id: string) { return `match:${id}:state`; }
   private ballsKey(id: string) { return `match:${id}:balls`; }
   private viewersKey(id: string) { return `match:${id}:viewers`; }
+  /**
+   * GET /matches/:id's cached payload. Defined here, not in MatchesService,
+   * because this service is the one place a match row changes post-commit and
+   * therefore the only place that can reliably drop the cache.
+   */
+  detailKey(id: string) { return `match:${id}:detail`; }
   channel(id: string) { return `live:match:${id}`; }
 
   /** Redis-first read; on miss, rebuild from the Postgres checkpoint and re-warm. */
@@ -50,6 +56,12 @@ export class LiveStateService {
     try {
       const snapshot = await this.loadFromDb(matchId);
       await this.warm(matchId, snapshot);
+      // Drop the match-detail cache in the same breath. A status transition —
+      // scheduled → live above all — changes the match row without changing the
+      // live-state seq, so a key derived from that seq stayed "valid" and the
+      // API kept serving the pre-start snapshot for the whole TTL. Starting a
+      // gully match and being told it is still 'scheduled' was that bug.
+      await this.redis.del(this.detailKey(matchId));
       await this.redis.publish(
         this.channel(matchId),
         JSON.stringify({ event, data: { ...extra, state: snapshot } }),
