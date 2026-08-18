@@ -98,10 +98,14 @@ class BallDto {
   @IsOptional() @IsObject() wagon?: object;
   @IsOptional() @IsObject() pitch?: object;
   @IsOptional() @IsString() shot_type?: string;
+  /** Gully cricket shot placement: {"region":"square_leg","label":"Square Leg","angle_deg":-77,"distance_pct":66,"six":false} */
+  @IsOptional() @IsObject() shot_placement?: object;
 }
 
 class NewBatterDto {
   @IsUUID() player_id!: string;
+  /** For mid-over dismissals: whether to start a fresh new over or continue this one */
+  @IsOptional() @IsIn(['new_over', 'continue_over']) over_action?: string;
 }
 
 class CloseInningsDto {

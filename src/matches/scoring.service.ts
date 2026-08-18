@@ -701,7 +701,7 @@ export class ScoringService {
   }
 
   // ------------------------------------------------------------- new batter
-  async newBatter(matchId: string, dto: { player_id: string; wicket_broken_end?: 'striker' | 'non_striker' }) {
+  async newBatter(matchId: string, dto: { player_id: string; wicket_broken_end?: 'striker' | 'non_striker'; over_action?: string }) {
     const out = await this.withMatch(matchId, async (client, match) => {
       const ls = match.live_state;
       if (!ls?.pending_new_batter) throw new BadRequestException('No new batter required');
@@ -711,6 +711,15 @@ export class ScoringService {
       const rules: FormatRules = match.rules_snapshot;
       const solo = rules?.solo_batting?.enabled === true;
       const dismissed = ls.pending_new_batter;
+
+      // For gully cricket mid-over dismissals: if user selects "start new over",
+      // reset the over counter to 0 so the next bowler starts a fresh over.
+      if (solo && dto.over_action === 'new_over' && ls.engine.currentOverBalls > 0) {
+        // Reset the over balls counter for a fresh over start
+        ls.engine.currentOverBalls = 0;
+        // Note: lastOverBowlerId stays as is - it represents the bowler of the
+        // last COMPLETED over, not the incomplete one being reset
+      }
 
       if (solo) {
         // Rotation mode: the outgoing batter occupies BOTH ends, so replacing

@@ -265,7 +265,11 @@ export function applyBall(state: LiveInningsState, ev: BallEvent, rules: FormatR
   if (isLegalDelivery && next.currentOverBalls === rules.balls_per_over) {
     effects.push({ kind: 'over_complete', overNumber: Math.floor(next.legalBalls / rules.balls_per_over) - 1 });
     next.currentOverBalls = 0;
-    next.lastOverBowlerId = ev.bowlerId;
+    // In gully rotation mode with mid-over dismissals, don't update lastOverBowlerId
+    // based on who finished the over — use the bowler-selection validation instead
+    if (!rules.solo_batting?.enabled) {
+      next.lastOverBowlerId = ev.bowlerId;
+    }
     [next.strikerId, next.nonStrikerId] = [next.nonStrikerId, next.strikerId];
   }
 
