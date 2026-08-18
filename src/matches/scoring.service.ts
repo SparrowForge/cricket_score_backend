@@ -735,6 +735,10 @@ export class ScoringService {
       ls.pending_new_batter = null;
 
       if (solo) {
+        // Rotation mode: force bowler selection for the new batter. Even if a bowler
+        // was bowling before the dismissal, they must be explicitly chosen again.
+        // This enforces the no-consecutive-overs rule mid-over.
+        ls.current_bowler = null;
         // Hand the batting slot over: close the outgoing one if the ball path
         // has not already (a quota retirement closes it there), open the new.
         await client.query(

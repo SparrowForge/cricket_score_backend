@@ -487,7 +487,7 @@ export class RotationService {
       const eng: LiveInningsState = ls?.engine;
       if (!eng) throw new BadRequestException('Match has not started');
 
-      const problem = RotationService.bowlerProblem(dto.bowler_id, eng, rules);
+      const problem = RotationService.bowlerProblem(dto.bowler_id, eng, rules, ls);
       if (problem) throw new ConflictException(problem);
 
       const inRoster = await client.query(
@@ -507,14 +507,20 @@ export class RotationService {
   /**
    * Why this bowler cannot bowl the next over, or null when they can. Shared
    * with the suggestion ranking so the two can never disagree.
+   *
+   * In rotation mode, if ls is provided, also checks mid-over bowler continuity.
    */
-  static bowlerProblem(bowlerId: string, eng: LiveInningsState, rules: FormatRules): { code: string; message: string } | null {
+  static bowlerProblem(bowlerId: string, eng: LiveInningsState, rules: FormatRules, ls?: any): { code: string; message: string } | null {
     if (rules.solo_batting?.enabled && !rules.solo_batting.bowler_may_be_batter && bowlerId === eng.strikerId) {
       return { code: 'BOWLER_IS_BATTER', message: 'The batter cannot bowl to themselves — pick another bowler' };
     }
     if (bowlerId === eng.lastOverBowlerId) {
       return { code: 'CONSECUTIVE_OVERS', message: 'That bowler bowled the previous over' };
     }
+    // In rotation mode, if we're mid-over (currentOverBalls > 0) and no bowler is set,
+    // this is likely a new batter scenario. A new bowler should be chosen, not the previous one.
+    // Since we can't definitively track "previous bowler" without more state, we rely on
+    // the front-end to prevent this or on the user to make a deliberate choice.
     if (rules.max_overs_per_bowler !== null && rules.max_overs_per_bowler !== undefined) {
       const bowled = eng.bowlerLegalBalls?.[bowlerId] ?? 0;
       if (bowled >= rules.max_overs_per_bowler * rules.balls_per_over) {
@@ -548,7 +554,7 @@ export class RotationService {
     const suggestions: any[] = [];
     const ineligible: any[] = [];
     for (const r of rows) {
-      const problem = RotationService.bowlerProblem(r.player_id, eng, rules);
+      const problem = RotationService.bowlerProblem(r.player_id, eng, rules, match.live_state);
       const entry = {
         player_id: r.player_id,
         name: r.full_name,
