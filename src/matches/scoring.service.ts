@@ -1753,6 +1753,49 @@ export class ScoringService {
       [inningsId, agg.runs, agg.wkts, agg.legal, agg.wides, agg.nbs, agg.byes, agg.lbs],
     );
 
+    // Rotation mode: rotation_slots and rotation_bowl_quota are incremented in
+    // place per ball, so an undo leaves them holding the pre-undo totals — and
+    // the console's ranking table reads them, not ls.batters. Recompute both
+    // from the surviving stream, and drop a 'dismissed'/'quota' close whose
+    // ball no longer exists ('voluntary'/'withdrawn' leave no ball, so they
+    // are the durable record replay seeds from and must survive untouched).
+    if (rules.solo_batting?.enabled) {
+      await client.query(
+        `UPDATE rotation_slots s
+            SET balls_faced = agg.legal, runs_scored = agg.runs
+           FROM (SELECT r.player_id,
+                        count(b.id) FILTER (WHERE b.is_legal)::int AS legal,
+                        coalesce(sum(b.runs_batter), 0)::int AS runs
+                   FROM rotation_slots r
+                   LEFT JOIN balls b ON b.striker_id = r.player_id
+                                    AND b.innings_id = $2 AND NOT b.is_superseded
+                  WHERE r.match_id = $1
+                  GROUP BY r.player_id) agg
+          WHERE s.match_id = $1 AND s.player_id = agg.player_id`,
+        [match.id, inningsId],
+      );
+      await client.query(
+        `UPDATE rotation_bowl_quota q
+            SET legal_balls = agg.legal, last_over_number = agg.last_over
+           FROM (SELECT r.player_id,
+                        count(b.id) FILTER (WHERE b.is_legal)::int AS legal,
+                        max(b.over_number) AS last_over
+                   FROM rotation_bowl_quota r
+                   LEFT JOIN balls b ON b.bowler_id = r.player_id
+                                    AND b.innings_id = $2 AND NOT b.is_superseded
+                  WHERE r.match_id = $1
+                  GROUP BY r.player_id) agg
+          WHERE q.match_id = $1 AND q.player_id = agg.player_id`,
+        [match.id, inningsId],
+      );
+      await client.query(
+        `UPDATE rotation_slots SET ended_reason = NULL, ended_at = NULL
+          WHERE match_id = $1 AND ended_reason IN ('dismissed', 'quota')
+            AND player_id <> ALL($2::uuid[])`,
+        [match.id, engine?.battersCompleted ?? []],
+      );
+    }
+
     // The end-of-innings card is auto commentary too, but it hangs off the
     // innings rather than a ball (ball_id IS NULL), so the ball-keyed rebuild
     // above skips it — regenerate it here or it keeps quoting the score from
@@ -1823,6 +1866,9 @@ export class ScoringService {
     ls.pending_new_batter = null;
     ls.current_bowler = currentBowler;
     ls.engine = engine;
+    if (rules.solo_batting?.enabled) {
+      ls.rotation = await this.rotation.buildBlock(client, match.id, rules, engine);
+    }
     ls.summary = await this.buildSummary(client, ls, rules);
     const newSeq = engine?.seq ?? 0;
     // No balls survived the replay (e.g. the innings was closed before any ball
