@@ -514,7 +514,12 @@ export class RotationService {
     if (rules.solo_batting?.enabled && !rules.solo_batting.bowler_may_be_batter && bowlerId === eng.strikerId) {
       return { code: 'BOWLER_IS_BATTER', message: 'The batter cannot bowl to themselves — pick another bowler' };
     }
-    if (bowlerId === eng.lastOverBowlerId) {
+    // In gully rotation mode, if we're mid-over (currentOverBalls > 0), don't check consecutive overs
+    // because we're selecting a bowler to finish the SAME incomplete over, not starting a new one.
+    // The consecutive-overs rule prevents bowling TWO COMPLETE overs in a row, not within one over.
+    const isRotationMode = rules.solo_batting?.enabled;
+    const isMidOver = isRotationMode && eng.currentOverBalls > 0;
+    if (!isMidOver && bowlerId === eng.lastOverBowlerId) {
       return { code: 'CONSECUTIVE_OVERS', message: 'That bowler bowled the previous over' };
     }
     // In rotation mode, if we're mid-over (currentOverBalls > 0) and no bowler is set,
