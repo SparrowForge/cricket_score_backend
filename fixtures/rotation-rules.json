@@ -1,0 +1,266 @@
+{
+  "_comment": [
+    "Shared rules-engine fixture corpus for Rotation Gully Mode.",
+    "",
+    "This file is the CANONICAL copy. It is mirrored verbatim into",
+    "code/mobile/test/fixtures/rotation_rules.json so the Dart port can be run",
+    "against exactly the same expectations. The two repos are separate, so the",
+    "copy cannot be a symlink — if you change one, change the other, and the",
+    "backend runner will tell you when they diverge.",
+    "",
+    "Runners:",
+    "  backend  npm run test:rules              (scripts/test-rules.js)",
+    "  mobile   flutter test test/rotation_rules_test.dart",
+    "",
+    "Each case merges `rules` over defaults.rules and `state` over",
+    "defaults.state, applies `event`, and asserts `expect`. Only the fields",
+    "named in expect.next are checked; effects are compared as an ordered list",
+    "of `kind` values."
+  ],
+
+  "defaults": {
+    "rules": {
+      "innings_per_side": 1,
+      "overs_per_innings": 3,
+      "balls_per_over": 6,
+      "players_per_side": 4,
+      "max_overs_per_bowler": 1,
+      "wickets_to_fall": 3,
+      "powerplays": [],
+      "super_over": { "enabled": false },
+      "dls": { "enabled": false },
+      "follow_on": { "enabled": false },
+      "declaration_allowed": false,
+      "no_ball": { "runs": 1, "free_hit": false },
+      "wide": { "runs": 1 },
+      "twelfth_man": { "allowed": false },
+      "solo_batting": {
+        "enabled": true,
+        "batter_count": 3,
+        "balls_per_batter": 6,
+        "retire_on_quota": true
+      }
+    },
+    "state": {
+      "seq": 0,
+      "totalRuns": 0,
+      "totalWickets": 0,
+      "legalBalls": 0,
+      "maxOvers": 3,
+      "target": null,
+      "freeHitPending": false,
+      "currentOverBalls": 0,
+      "lastOverBowlerId": null,
+      "bowlerLegalBalls": {},
+      "strikerId": "B1",
+      "nonStrikerId": "B1",
+      "battersRetiredHurt": [],
+      "batterLegalBalls": {},
+      "battersCompleted": []
+    },
+    "event": {
+      "strikerId": "B1",
+      "nonStrikerId": "B1",
+      "bowlerId": "P2",
+      "runsBatter": 0,
+      "extraType": null,
+      "runsExtras": 0,
+      "wicket": null
+    }
+  },
+
+  "cases": [
+    {
+      "name": "solo: odd runs do not rotate strike (both ends are the same player)",
+      "why": "The whole no-rotation requirement falls out of striker===nonStriker for free. If this fails, the phantom-non-striker trick is broken.",
+      "event": { "runsBatter": 1 },
+      "expect": {
+        "ok": true,
+        "effects": [],
+        "next": { "strikerId": "B1", "nonStrikerId": "B1", "totalRuns": 1 }
+      }
+    },
+    {
+      "name": "solo: over change does not swap strike",
+      "why": "The over-end swap is the second place a partner is assumed.",
+      "state": { "legalBalls": 5, "currentOverBalls": 5, "batterLegalBalls": { "B1": 2 } },
+      "event": { "runsBatter": 2 },
+      "expect": {
+        "ok": true,
+        "effects": ["over_complete"],
+        "next": { "strikerId": "B1", "nonStrikerId": "B1", "currentOverBalls": 0, "lastOverBowlerId": "P2" }
+      }
+    },
+    {
+      "name": "solo: batter retires out on reaching the ball quota",
+      "why": "The core new rule. Quota lands on an over boundary in real gully (whole overs per batter), so this is the common path.",
+      "state": { "legalBalls": 5, "currentOverBalls": 5, "batterLegalBalls": { "B1": 5 } },
+      "event": { "runsBatter": 1 },
+      "expect": {
+        "ok": true,
+        "effects": ["over_complete", "batter_retired", "new_batter_required"],
+        "next": { "battersCompleted": ["B1"], "totalWickets": 0, "batterLegalBalls": { "B1": 6 } }
+      }
+    },
+    {
+      "name": "solo: quota can fire mid-over",
+      "why": "A shortened quota (rain, withdrawal) need not align to an over.",
+      "rules": { "solo_batting": { "enabled": true, "batter_count": 3, "balls_per_batter": 4, "retire_on_quota": true } },
+      "state": { "legalBalls": 3, "currentOverBalls": 3, "batterLegalBalls": { "B1": 3 } },
+      "event": { "runsBatter": 0 },
+      "expect": {
+        "ok": true,
+        "effects": ["batter_retired", "new_batter_required"],
+        "next": { "battersCompleted": ["B1"], "currentOverBalls": 4 }
+      }
+    },
+    {
+      "name": "solo: a wide does not count toward the batter quota",
+      "why": "Quota is in LEGAL balls, so a bowler cannot burn a batter's innings with wides.",
+      "state": { "legalBalls": 5, "currentOverBalls": 5, "batterLegalBalls": { "B1": 5 } },
+      "event": { "extraType": "wide", "runsExtras": 0 },
+      "expect": {
+        "ok": true,
+        "effects": [],
+        "next": { "batterLegalBalls": { "B1": 5 }, "battersCompleted": [], "totalRuns": 1, "legalBalls": 5 }
+      }
+    },
+    {
+      "name": "solo: dismissal consumes a batter slot without a quota double-count",
+      "why": "Dismissal and quota must never both fire for one ball, or the innings ends a batter early.",
+      "state": { "legalBalls": 5, "currentOverBalls": 5, "batterLegalBalls": { "B1": 5 } },
+      "event": { "wicket": { "type": "bowled", "dismissedPlayerId": "B1" } },
+      "expect": {
+        "ok": true,
+        "effects": ["new_batter_required", "over_complete"],
+        "next": { "battersCompleted": ["B1"], "totalWickets": 1 }
+      }
+    },
+    {
+      "name": "solo: retired_hurt does not consume a batter slot",
+      "why": "retired_hurt is a temporary absence; the player can come back and still owes their overs.",
+      "event": { "wicket": { "type": "retired_hurt", "dismissedPlayerId": "B1" } },
+      "expect": {
+        "ok": true,
+        "effects": ["new_batter_required"],
+        "next": { "battersCompleted": [], "totalWickets": 0, "battersRetiredHurt": ["B1"] }
+      }
+    },
+    {
+      "name": "solo: innings ends when the last batter is used up (all_batted)",
+      "why": "battersCompleted, not totalWickets, is the terminating quantity.",
+      "state": {
+        "battersCompleted": ["B1", "B2"],
+        "strikerId": "B3", "nonStrikerId": "B3",
+        "legalBalls": 11, "currentOverBalls": 5,
+        "batterLegalBalls": { "B3": 5 }
+      },
+      "event": { "strikerId": "B3", "nonStrikerId": "B3", "runsBatter": 1 },
+      "expect": {
+        "ok": true,
+        "effects": ["over_complete", "batter_retired", "new_batter_required", "innings_complete"],
+        "next": { "battersCompleted": ["B1", "B2", "B3"], "totalWickets": 0 }
+      }
+    },
+    {
+      "name": "solo: innings ends on all_batted even when every batter was dismissed",
+      "why": "A pool that is bowled out reaches the same terminating condition; the reason label is all_batted, not all_out.",
+      "state": {
+        "battersCompleted": ["B1", "B2"],
+        "totalWickets": 2,
+        "strikerId": "B3", "nonStrikerId": "B3",
+        "legalBalls": 8, "currentOverBalls": 2
+      },
+      "event": { "strikerId": "B3", "nonStrikerId": "B3", "wicket": { "type": "bowled", "dismissedPlayerId": "B3" } },
+      "expect": {
+        "ok": true,
+        "effects": ["new_batter_required", "innings_complete"],
+        "next": { "battersCompleted": ["B1", "B2", "B3"], "totalWickets": 3 }
+      }
+    },
+    {
+      "name": "solo: players_per_side = N+1 keeps last-man-standing unreachable",
+      "why": "THE critical config. With players_per_side = N the engine would seize both ends at the second-to-last wicket and the final batter would never bat.",
+      "state": {
+        "battersCompleted": ["B1"],
+        "totalWickets": 1,
+        "strikerId": "B2", "nonStrikerId": "B2",
+        "legalBalls": 4, "currentOverBalls": 4
+      },
+      "event": { "strikerId": "B2", "nonStrikerId": "B2", "wicket": { "type": "bowled", "dismissedPlayerId": "B2" } },
+      "expect": {
+        "ok": true,
+        "effects": ["new_batter_required"],
+        "next": { "strikerId": "B2", "nonStrikerId": "B2", "totalWickets": 2, "battersCompleted": ["B1", "B2"] }
+      }
+    },
+    {
+      "name": "solo: the batter cannot bowl to themselves",
+      "why": "In rotation mode every batter is also an eligible bowler, so nothing else stops this.",
+      "event": { "bowlerId": "B1" },
+      "expect": { "ok": false, "code": "BOWLER_IS_BATTER" }
+    },
+    {
+      "name": "solo: bowler_may_be_batter opts out of that guard",
+      "why": "House rules vary; the guard is configurable rather than absolute.",
+      "rules": { "solo_batting": { "enabled": true, "batter_count": 3, "balls_per_batter": 6, "bowler_may_be_batter": true } },
+      "event": { "bowlerId": "B1", "runsBatter": 2 },
+      "expect": { "ok": true, "effects": [], "next": { "totalRuns": 2 } }
+    },
+    {
+      "name": "solo: consecutive-overs guard still applies",
+      "why": "Fair bowling rotation is inherited from the existing engine, not reimplemented.",
+      "state": { "legalBalls": 6, "currentOverBalls": 0, "lastOverBowlerId": "P2" },
+      "event": { "bowlerId": "P2" },
+      "expect": { "ok": false, "code": "CONSECUTIVE_OVERS" }
+    },
+
+    {
+      "name": "standard regression: odd runs still rotate strike",
+      "why": "Every rotation branch is behind solo_batting.enabled. Normal cricket must be byte-identical.",
+      "rules": { "players_per_side": 11, "wickets_to_fall": 10, "solo_batting": null, "max_overs_per_bowler": null, "overs_per_innings": 20 },
+      "state": { "strikerId": "A1", "nonStrikerId": "A2", "maxOvers": 20 },
+      "event": { "strikerId": "A1", "nonStrikerId": "A2", "runsBatter": 1 },
+      "expect": {
+        "ok": true,
+        "effects": [],
+        "next": { "strikerId": "A2", "nonStrikerId": "A1" }
+      }
+    },
+    {
+      "name": "standard regression: over change still swaps strike",
+      "rules": { "players_per_side": 11, "wickets_to_fall": 10, "solo_batting": null, "max_overs_per_bowler": null, "overs_per_innings": 20 },
+      "state": { "strikerId": "A1", "nonStrikerId": "A2", "maxOvers": 20, "legalBalls": 5, "currentOverBalls": 5 },
+      "event": { "strikerId": "A1", "nonStrikerId": "A2", "runsBatter": 0 },
+      "expect": {
+        "ok": true,
+        "effects": ["over_complete"],
+        "next": { "strikerId": "A2", "nonStrikerId": "A1" }
+      }
+    },
+    {
+      "name": "standard regression: last man standing still seizes both ends",
+      "why": "The behaviour rotation mode borrows must itself keep working for real last-man-batting formats.",
+      "rules": { "players_per_side": 11, "wickets_to_fall": 11, "solo_batting": null, "max_overs_per_bowler": null, "overs_per_innings": 20 },
+      "state": { "strikerId": "A1", "nonStrikerId": "A2", "maxOvers": 20, "totalWickets": 9 },
+      "event": { "strikerId": "A1", "nonStrikerId": "A2", "wicket": { "type": "bowled", "dismissedPlayerId": "A1" } },
+      "expect": {
+        "ok": true,
+        "effects": [],
+        "next": { "strikerId": "A2", "nonStrikerId": "A2", "totalWickets": 10 }
+      }
+    },
+    {
+      "name": "standard regression: a dismissal does not touch battersCompleted",
+      "why": "The new counter must stay empty outside rotation mode, or ordinary innings would terminate early.",
+      "rules": { "players_per_side": 11, "wickets_to_fall": 10, "solo_batting": null, "max_overs_per_bowler": null, "overs_per_innings": 20 },
+      "state": { "strikerId": "A1", "nonStrikerId": "A2", "maxOvers": 20 },
+      "event": { "strikerId": "A1", "nonStrikerId": "A2", "wicket": { "type": "bowled", "dismissedPlayerId": "A1" } },
+      "expect": {
+        "ok": true,
+        "effects": ["new_batter_required"],
+        "next": { "battersCompleted": [], "totalWickets": 1 }
+      }
+    }
+  ]
+}

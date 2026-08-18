@@ -191,6 +191,18 @@ export class StatsService {
                   (SELECT max(max_overs)::numeric FROM innings WHERE match_id = $1),
                   20) AS o
        ),
+       cfg AS (
+         -- Rotation (gully) mode re-bases three things. Milestones are the
+         -- important one: they scale with overs_per_innings, and in a 10x2
+         -- rotation match that is 20 overs while a batter only ever faces 2 —
+         -- so on the standard scale the first milestone would sit at 30 runs
+         -- off 12 balls and never be reached. Rotation scales them off the
+         -- batter's OWN allotment instead, which makes the ladder a strike-rate
+         -- ladder: 1.0x / 1.5x / 2.0x / 2.5x of balls_per_batter.
+         SELECT (m.mode = 'rotation') AS is_rotation,
+                greatest(coalesce((m.rules_snapshot->'solo_batting'->>'balls_per_batter')::numeric, 0), 1) AS bpb
+         FROM matches m WHERE m.id = $1
+       ),
        big_wickets AS (
          -- Match-turning bowling: credit for removing a batter who was set,
          -- weighted by the runs the victim had made — capped PER WICKET so one
@@ -234,7 +246,13 @@ export class StatsService {
          -- Rewards players who score a significant share of team's runs
          SELECT pms.match_id, pms.player_id,
                 pms.runs_scored + pms.fours * 0.5 + pms.sixes * 1
-                + CASE WHEN ov.o <= 20 THEN
+                + CASE WHEN cfg.is_rotation THEN
+                        CASE WHEN pms.runs_scored >= 2.5 * cfg.bpb THEN 16
+                             WHEN pms.runs_scored >= 2.0 * cfg.bpb THEN 12
+                             WHEN pms.runs_scored >= 1.5 * cfg.bpb THEN 8
+                             WHEN pms.runs_scored >= 1.0 * cfg.bpb THEN 4
+                             ELSE 0 END
+                       WHEN ov.o <= 20 THEN
                         CASE WHEN pms.runs_scored >= 3 * ov.o THEN 16
                              WHEN pms.runs_scored >= 2.5 * ov.o THEN 12
                              WHEN pms.runs_scored >= 2 * ov.o THEN 8
@@ -248,19 +266,33 @@ export class StatsService {
                              ELSE 0 END
                        END
                 + CASE WHEN pms.batted AND pms.balls_faced > 0
-                       THEN greatest(-8, least(8,
+                       -- Rotation caps at +/-5: a 12-ball innings makes the
+                       -- par estimate noisy, so it should not swing the award.
+                       THEN greatest(CASE WHEN cfg.is_rotation THEN -5 ELSE -8 END,
+                            least(CASE WHEN cfg.is_rotation THEN 5 ELSE 8 END,
                             (pms.runs_scored - pms.balls_faced * mrr.rr / 6) * 0.5))
                        ELSE 0 END
                 + CASE WHEN ov.o > 0 THEN pms.runs_scored::numeric / ov.o
                        ELSE 0 END AS batting,
-                pms.wickets_taken * 6 + pms.maidens * 4 + pms.dot_balls * 0.25
-                + CASE WHEN pms.wickets_taken >= 5 THEN 14
+                -- Wicket stays at 6 in rotation: 10 batters over ~120 balls is
+                -- the same wicket density as a T20 innings, so the existing
+                -- calibration transfers unchanged. A dot is worth slightly more
+                -- (one batter, no rotation, so it is a purer bowling win).
+                pms.wickets_taken * 6 + pms.maidens * 4
+                + pms.dot_balls * CASE WHEN cfg.is_rotation THEN 0.35 ELSE 0.25 END
+                + CASE WHEN cfg.is_rotation THEN
+                        -- Two overs each makes a 4-for near-impossible.
+                        CASE WHEN pms.wickets_taken >= 3 THEN 9
+                             WHEN pms.wickets_taken = 2 THEN 4
+                             ELSE 0 END
+                       WHEN pms.wickets_taken >= 5 THEN 14
                        WHEN pms.wickets_taken = 4 THEN 10
                        WHEN pms.wickets_taken = 3 THEN 6
                        WHEN pms.wickets_taken = 2 THEN 3
                        ELSE 0 END
                 + CASE WHEN pms.balls_bowled > 0
-                       THEN greatest(-8, least(8,
+                       THEN greatest(CASE WHEN cfg.is_rotation THEN -5 ELSE -8 END,
+                            least(CASE WHEN cfg.is_rotation THEN 5 ELSE 8 END,
                             (pms.balls_bowled * mrr.rr / 6 - pms.runs_conceded) * 0.5))
                        ELSE 0 END
                 + coalesce(bw.victim_value, 0) AS bowling,
@@ -268,12 +300,16 @@ export class StatsService {
                 - coalesce(fe.dropped_catches, 0) * 3
                 - coalesce(fe.missed_run_outs, 0) * 2
                 - coalesce(fe.misfields, 0) * 1 AS fielding,
-                CASE WHEN m.winner_team_id IS NOT NULL AND pms.team_id = m.winner_team_id
+                -- Rotation has no teams, so there is no winning side to
+                -- reward; everyone would score the same multiplier anyway.
+                CASE WHEN NOT cfg.is_rotation AND m.winner_team_id IS NOT NULL
+                       AND pms.team_id = m.winner_team_id
                      THEN 1.1 ELSE 1.0 END AS win_factor
          FROM player_match_stats pms
          JOIN matches m ON m.id = pms.match_id
          CROSS JOIN mrr
          CROSS JOIN ov
+         CROSS JOIN cfg
          LEFT JOIN big_wickets bw ON bw.player_id = pms.player_id
          LEFT JOIN fielding_errors fe ON fe.player_id = pms.player_id
          WHERE pms.match_id = $1
@@ -287,6 +323,31 @@ export class StatsService {
               -- Player-of-the-match +3 is added once that is settled.
               round((batting + bowling + fielding) * win_factor, 2)
        FROM scored`,
+      [matchId],
+    );
+
+    // Rotation mode's "Impact Bonus": +3 to the top scorer and +3 to the top
+    // wicket-taker. Deliberately small — it should break a near-tie, not decide
+    // the award, and it replaces the winning-team bonus that rotation cannot pay
+    // because it has no teams.
+    await client.query(
+      `WITH leaders AS (
+         SELECT (SELECT pms.player_id FROM player_match_stats pms
+                  WHERE pms.match_id = $1 AND pms.batted
+                  ORDER BY pms.runs_scored DESC, pms.balls_faced ASC LIMIT 1) AS top_bat,
+                (SELECT pms.player_id FROM player_match_stats pms
+                  WHERE pms.match_id = $1 AND pms.bowled AND pms.wickets_taken > 0
+                  ORDER BY pms.wickets_taken DESC, pms.runs_conceded ASC LIMIT 1) AS top_bowl
+       )
+       UPDATE match_mvp_points mp
+          SET batting_points = mp.batting_points + CASE WHEN mp.player_id = l.top_bat THEN 3 ELSE 0 END,
+              bowling_points = mp.bowling_points + CASE WHEN mp.player_id = l.top_bowl THEN 3 ELSE 0 END,
+              total_points   = mp.total_points
+                             + CASE WHEN mp.player_id = l.top_bat THEN 3 ELSE 0 END
+                             + CASE WHEN mp.player_id = l.top_bowl THEN 3 ELSE 0 END
+         FROM leaders l, matches m
+        WHERE mp.match_id = $1 AND m.id = $1 AND m.mode = 'rotation'
+          AND (mp.player_id = l.top_bat OR mp.player_id = l.top_bowl)`,
       [matchId],
     );
 
@@ -495,9 +556,14 @@ export class StatsService {
            two_wkt_hauls, three_wkt_hauls, four_wkt_hauls, five_wkt_hauls, maidens,
            catches, stumpings, run_outs)
          SELECT pms.player_id,
-                CASE coalesce(f.slug::text, 'custom')
-                  WHEN 't20' THEN 't20' WHEN 'odi' THEN 'one_day' WHEN 't10' THEN 't10'
-                  WHEN 'sixes' THEN 'sixes' WHEN 'test' THEN 'test' ELSE 'custom' END AS family,
+                -- Gully results are real, but a 12-ball innings against a tape
+                -- ball does not belong in the same career bucket as competitive
+                -- cricket, so rotation gets its own family and its own leaderboard.
+                CASE WHEN m.mode = 'rotation' THEN 'gully'
+                     ELSE CASE coalesce(f.slug::text, 'custom')
+                       WHEN 't20' THEN 't20' WHEN 'odi' THEN 'one_day' WHEN 't10' THEN 't10'
+                       WHEN 'sixes' THEN 'sixes' WHEN 'test' THEN 'test' ELSE 'custom' END
+                END AS family,
                 count(*)::int, count(*) FILTER (WHERE pms.batted)::int,
                 sum(pms.runs_scored)::int, sum(pms.balls_faced)::int,
                 count(*) FILTER (WHERE pms.batted AND NOT pms.is_out)::int,
@@ -535,6 +601,11 @@ export class StatsService {
 
   // ---------- head to head ----------
   private async updateHeadToHead(client: PoolClient, match: any) {
+    // Rotation (gully) matches are played between two synthetic pool teams that
+    // exist only to satisfy the NOT NULL team columns. A head-to-head record
+    // between "Gully Pool" and "Gully Field" is meaningless, and every gully
+    // match in the org would pile into the same row.
+    if (match.mode === 'rotation') return;
     const [a, b] = [match.team_a_id, match.team_b_id].sort();
     await client.query(
       `INSERT INTO team_head_to_head (team_a_id, team_b_id, matches_played, team_a_wins, team_b_wins, ties, no_results, last_five, updated_at)

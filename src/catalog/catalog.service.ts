@@ -154,7 +154,8 @@ export class CatalogService {
         `SELECT t.*, v.name AS home_venue,
                 (SELECT count(*)::int FROM team_players tp WHERE tp.team_id = t.id AND tp.active_to IS NULL) AS squad_size
          FROM teams t LEFT JOIN venues v ON v.id = t.home_venue_id
-         WHERE t.organization_id = $1 AND t.deleted_at IS NULL ORDER BY t.name`,
+         WHERE t.organization_id = $1 AND t.deleted_at IS NULL AND NOT t.is_synthetic
+         ORDER BY t.name`,
         [orgId],
       )
     ).rows;

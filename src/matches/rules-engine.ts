@@ -20,6 +20,31 @@ export interface FormatRules {
   no_ball: { runs: number; free_hit: boolean };
   wide: { runs: number };
   twelfth_man: { allowed: boolean; can_bat?: boolean; can_bowl?: boolean };
+  /**
+   * Rotation ("gully") mode: one batter at a time, no partner, everyone in the
+   * pool bats once. Absent or disabled => ordinary cricket and every branch
+   * below is inert, so no existing format changes behaviour.
+   *
+   * The solo batter is represented by pointing BOTH ends at the same player
+   * (strikerId === nonStrikerId), which is the shape the engine already takes
+   * during last man standing — so strike rotation and the over-change swap
+   * become swaps of a value with itself and need no special-casing.
+   *
+   * IMPORTANT: `players_per_side` must be set to batter_count + 1. The
+   * last-man-standing branch below triggers at `players_per_side - 1` wickets;
+   * with players_per_side === batter_count it would fire on the second-to-last
+   * batter and silently deny the final batter their innings.
+   */
+  solo_batting?: {
+    enabled: boolean;
+    /** Pool size N — the number of batters, and the terminating quantity. */
+    batter_count: number;
+    /** Legal balls each batter faces before retiring out on quota. */
+    balls_per_batter: number;
+    retire_on_quota?: boolean;
+    /** Allow the batter to also bowl the delivery they are facing. Never true in practice. */
+    bowler_may_be_batter?: boolean;
+  };
   [key: string]: unknown; // custom tournament keys flow through untouched
 }
 
@@ -67,14 +92,31 @@ export interface LiveInningsState {
   strikerId: string;
   nonStrikerId: string;
   battersRetiredHurt: string[];
+  /**
+   * Rotation mode only. Legal balls faced per batter — the basis of the
+   * per-batter quota, and the mirror image of bowlerLegalBalls. Counts legal
+   * deliveries only, so a quota of `overs_per_batter * balls_per_over` really
+   * does buy that many overs regardless of how many wides are bowled at them.
+   */
+  batterLegalBalls: Record<string, number>;
+  /**
+   * Rotation mode only. Batters whose innings is over, by dismissal OR by
+   * exhausting their quota. This — not totalWickets — is what ends a rotation
+   * innings: a batter who survives their overs never raises the wicket count,
+   * so a wickets-only termination check would never fire in a match where
+   * everybody bats out their allotment.
+   */
+  battersCompleted: string[];
 }
 
 export type SideEffect =
   | { kind: 'over_complete'; overNumber: number }
-  | { kind: 'innings_complete'; reason: 'all_out' | 'overs' | 'target_reached' | 'declared' }
+  | { kind: 'innings_complete'; reason: 'all_out' | 'overs' | 'target_reached' | 'declared' | 'all_batted' }
   | { kind: 'match_complete'; result: 'win' | 'tie' }
   | { kind: 'super_over_required' }
   | { kind: 'new_batter_required'; dismissedId: string }
+  /** Rotation mode: the batter's allotted overs are used up — not a dismissal. */
+  | { kind: 'batter_retired'; playerId: string; reason: 'quota' }
   | { kind: 'free_hit_next' }
   | { kind: 'milestone'; type: 'fifty' | 'hundred' | 'hattrick' | 'five_for'; playerId: string };
 
@@ -90,6 +132,15 @@ export function applyBall(state: LiveInningsState, ev: BallEvent, rules: FormatR
 
   if (state.currentOverBalls === 0 && ev.bowlerId === state.lastOverBowlerId) {
     return err('CONSECUTIVE_OVERS', 'A bowler cannot bowl consecutive overs');
+  }
+
+  // Rotation mode: the pool bats and bowls, so the batter is always also an
+  // eligible bowler — and without this guard a scorer can hand them the ball
+  // while they are at the crease, which the ball row (striker === bowler)
+  // would then happily store.
+  if (rules.solo_batting?.enabled && !rules.solo_batting.bowler_may_be_batter
+      && ev.bowlerId === state.strikerId) {
+    return err('BOWLER_IS_BATTER', 'The batter cannot bowl to themselves — pick another bowler');
   }
 
   if (rules.max_overs_per_bowler !== null) {
@@ -131,7 +182,12 @@ export function applyBall(state: LiveInningsState, ev: BallEvent, rules: FormatR
     next.legalBalls += 1;
     next.currentOverBalls += 1;
     next.bowlerLegalBalls[ev.bowlerId] = (next.bowlerLegalBalls[ev.bowlerId] ?? 0) + 1;
+    // Rotation mode: the striker's own ball count, for the per-batter quota.
+    // Legacy states predate this map, hence the ??= rather than a bare index.
+    next.batterLegalBalls ??= {};
+    next.batterLegalBalls[ev.strikerId] = (next.batterLegalBalls[ev.strikerId] ?? 0) + 1;
   }
+  next.battersCompleted ??= [];
 
   // Last man standing: no reserve batter left in the squad to send in — only
   // reachable when wickets_to_fall was explicitly raised to players_per_side
@@ -143,6 +199,13 @@ export function applyBall(state: LiveInningsState, ev: BallEvent, rules: FormatR
   if (ev.wicket) {
     if (ev.wicket.type !== 'retired_hurt') next.totalWickets += 1;
     else next.battersRetiredHurt.push(ev.wicket.dismissedPlayerId);
+
+    // Rotation mode: a dismissal uses up a batter's slot. retired_hurt does
+    // not — it is a temporary absence, and the same player can be sent back in.
+    if (rules.solo_batting?.enabled && ev.wicket.type !== 'retired_hurt'
+        && !next.battersCompleted.includes(ev.wicket.dismissedPlayerId)) {
+      next.battersCompleted.push(ev.wicket.dismissedPlayerId);
+    }
 
     const noReserveLeft = ev.wicket.type !== 'retired_hurt'
       && next.totalWickets >= rules.players_per_side - 1;
@@ -206,9 +269,33 @@ export function applyBall(state: LiveInningsState, ev: BallEvent, rules: FormatR
     [next.strikerId, next.nonStrikerId] = [next.nonStrikerId, next.strikerId];
   }
 
+  // ---- Rotation mode: per-batter quota -----------------------------------
+  // A batter who uses up their allotted overs retires out and the next one
+  // comes in. Skipped when the ball also dismissed them — that already
+  // consumed the slot above, and firing both would push the same player onto
+  // battersCompleted twice and end the innings a batter early.
+  if (rules.solo_batting?.enabled && rules.solo_batting.retire_on_quota !== false
+      && isLegalDelivery && !ev.wicket) {
+    const faced = next.batterLegalBalls[ev.strikerId] ?? 0;
+    if (faced >= rules.solo_batting.balls_per_batter
+        && !next.battersCompleted.includes(ev.strikerId)) {
+      next.battersCompleted.push(ev.strikerId);
+      effects.push(
+        { kind: 'batter_retired', playerId: ev.strikerId, reason: 'quota' },
+        { kind: 'new_batter_required', dismissedId: ev.strikerId },
+      );
+    }
+  }
+
   // ---- Innings / match termination ---------------------------------------
   if (next.target !== null && next.totalRuns >= next.target) {
     effects.push({ kind: 'innings_complete', reason: 'target_reached' }, { kind: 'match_complete', result: 'win' });
+  } else if (rules.solo_batting?.enabled
+             && next.battersCompleted.length >= rules.solo_batting.batter_count) {
+    // Rotation mode's real terminating condition — covers a pool that was all
+    // dismissed, all retired on quota, or any mix of the two.
+    effects.push({ kind: 'innings_complete', reason: 'all_batted' });
+    maybeCloseChase(next, rules, effects);
   } else if (next.totalWickets >= rules.wickets_to_fall) {
     effects.push({ kind: 'innings_complete', reason: 'all_out' });
     maybeCloseChase(next, rules, effects);

@@ -4,13 +4,14 @@ import { SaasModule } from '../saas/saas.module';
 import { LiveStateService } from './live-state.service';
 import { MatchesController } from './matches.controller';
 import { MatchesService } from './matches.service';
+import { RotationService } from './rotation.service';
 import { ScoringService } from './scoring.service';
 import { StatsService } from './stats.service';
 
 @Module({
   imports: [SaasModule, EngagementModule],
   controllers: [MatchesController],
-  providers: [MatchesService, ScoringService, StatsService, LiveStateService],
+  providers: [MatchesService, ScoringService, StatsService, LiveStateService, RotationService],
   exports: [StatsService, LiveStateService],
 })
 export class MatchesModule {}

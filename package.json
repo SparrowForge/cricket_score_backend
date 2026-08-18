@@ -15,7 +15,8 @@
     "openapi": "node scripts/generate-openapi.js",
     "mvp:recalc": "node scripts/recalculate-mvp.js",
     "mvp:audit": "node scripts/mvp-audit-report.js",
-    "lint": "eslint \"src/**/*.ts\""
+    "lint": "eslint \"src/**/*.ts\"",
+    "test:rules": "node scripts/test-rules.js"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",

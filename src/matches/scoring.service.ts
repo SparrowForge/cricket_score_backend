@@ -6,6 +6,7 @@ import { PG_POOL } from '../database/database.module';
 import { SaasService } from '../saas/saas.service';
 import { deepMerge } from './matches.service';
 import { LiveStateService } from './live-state.service';
+import { RotationService } from './rotation.service';
 import { applyBall, BallEvent, chaseCloseEffect, FormatRules, LiveInningsState, SideEffect } from './rules-engine';
 import { StatsService } from './stats.service';
 
@@ -56,6 +57,9 @@ export class ScoringService {
     private readonly stats: StatsService,
     private readonly live: LiveStateService,
     private readonly saas: SaasService,
+    // Rotation setup/lifecycle. One-way: RotationService never imports this
+    // service back, so there is no module cycle to untangle.
+    private readonly rotation: RotationService,
   ) {}
 
   // ------------------------------------------------------------------ toss
@@ -365,7 +369,7 @@ export class ScoringService {
         target: innings.target_runs,
         freeHitPending: false, currentOverBalls: 0, lastOverBowlerId: null,
         bowlerLegalBalls: {}, strikerId: dto.striker_id, nonStrikerId: dto.non_striker_id,
-        battersRetiredHurt: [],
+        battersRetiredHurt: [], batterLegalBalls: {}, battersCompleted: [],
       };
       ls.engine = engine;
       ls.current_bowler = dto.bowler_id;
@@ -606,6 +610,46 @@ export class ScoringService {
         }
       }
 
+      // ---- Rotation mode bookkeeping -------------------------------------
+      // Inside the same transaction as the ball, so rotation_slots can never
+      // disagree with the ball stream it is derived from.
+      if (rules.solo_batting?.enabled) {
+        await client.query(
+          `UPDATE rotation_slots
+              SET balls_faced = balls_faced + $3, runs_scored = runs_scored + $4,
+                  started_at = coalesce(started_at, now())
+            WHERE match_id = $1 AND player_id = $2`,
+          [matchId, ev.strikerId, isLegal ? 1 : 0, ev.runsBatter],
+        );
+        await client.query(
+          `UPDATE rotation_bowl_quota
+              SET legal_balls = legal_balls + $3, last_over_number = $4
+            WHERE match_id = $1 AND player_id = $2`,
+          [matchId, bowlerId, isLegal ? 1 : 0, overNumber],
+        );
+        // A quota retirement is not a dismissal, so nothing else closes the
+        // slot — but the batter is just as finished.
+        const retired = result.effects.find((e) => e.kind === 'batter_retired');
+        if (retired) {
+          await client.query(
+            `UPDATE rotation_slots SET ended_reason = 'quota', ended_at = now()
+              WHERE match_id = $1 AND player_id = $2 AND ended_reason IS NULL`,
+            [matchId, (retired as { playerId: string }).playerId],
+          );
+          const card = ls.batters?.[(retired as { playerId: string }).playerId];
+          if (card) card.out = true;
+        }
+        if (ev.wicket && ev.wicket.type !== 'retired_hurt') {
+          await client.query(
+            `UPDATE rotation_slots SET ended_reason = $3, ended_at = now()
+              WHERE match_id = $1 AND player_id = $2 AND ended_reason IS NULL`,
+            [matchId, ev.wicket.dismissedPlayerId,
+             ev.wicket.type === 'retired_out' ? 'voluntary' : 'dismissed'],
+          );
+        }
+        ls.rotation = await this.rotation.buildBlock(client, matchId, rules, post);
+      }
+
       ls.summary = await this.buildSummary(client, ls, rules);
 
       // Rolling record of the client_event_ids this state already includes.
@@ -664,14 +708,47 @@ export class ScoringService {
       await this.assertInXI(client, matchId, [dto.player_id], 'bat');
       if (ls.batters[dto.player_id]?.out) throw new BadRequestException('Player is already out');
 
+      const rules: FormatRules = match.rules_snapshot;
+      const solo = rules?.solo_batting?.enabled === true;
       const dismissed = ls.pending_new_batter;
-      if (ls.engine.strikerId === dismissed) ls.engine.strikerId = dto.player_id;
-      else if (ls.engine.nonStrikerId === dismissed) ls.engine.nonStrikerId = dto.player_id;
-      else ls.engine.strikerId = dto.player_id; // safety net
+
+      if (solo) {
+        // Rotation mode: the outgoing batter occupies BOTH ends, so replacing
+        // only the matching slot would leave nonStrikerId pointing at a batter
+        // who has left the field — and the striker === nonStriker invariant
+        // that makes strike rotation a no-op would be broken from here on.
+        if (ls.engine.strikerId !== dismissed && ls.engine.nonStrikerId !== dismissed) {
+          throw new BadRequestException('Live state is out of step with the pending batter — resync required');
+        }
+        ls.engine.strikerId = dto.player_id;
+        ls.engine.nonStrikerId = dto.player_id;
+      } else if (ls.engine.strikerId === dismissed) {
+        ls.engine.strikerId = dto.player_id;
+      } else if (ls.engine.nonStrikerId === dismissed) {
+        ls.engine.nonStrikerId = dto.player_id;
+      } else {
+        ls.engine.strikerId = dto.player_id; // safety net
+      }
 
       (ls.batters[dismissed] ??= await this.batterCard(client, dismissed)).out = true;
       ls.batters[dto.player_id] ??= await this.batterCard(client, dto.player_id);
       ls.pending_new_batter = null;
+
+      if (solo) {
+        // Hand the batting slot over: close the outgoing one if the ball path
+        // has not already (a quota retirement closes it there), open the new.
+        await client.query(
+          `UPDATE rotation_slots SET ended_reason = coalesce(ended_reason, 'dismissed'), ended_at = coalesce(ended_at, now())
+            WHERE match_id = $1 AND player_id = $2`,
+          [matchId, dismissed],
+        );
+        await client.query(
+          `UPDATE rotation_slots SET started_at = coalesce(started_at, now())
+            WHERE match_id = $1 AND player_id = $2`,
+          [matchId, dto.player_id],
+        );
+        ls.rotation = await this.rotation.buildBlock(client, matchId, rules, ls.engine);
+      }
 
       await client.query(`UPDATE matches SET live_state = $2 WHERE id = $1`, [matchId, JSON.stringify(ls)]);
       return { state: ls };
@@ -923,6 +1000,7 @@ export class ScoringService {
       target: inn.target_runs,
       freeHitPending: false, currentOverBalls: 0, lastOverBowlerId: null,
       bowlerLegalBalls: {}, strikerId: '', nonStrikerId: '', battersRetiredHurt: [],
+      batterLegalBalls: {}, battersCompleted: [],
     };
   }
 
@@ -1470,7 +1548,24 @@ export class ScoringService {
         target: innings.target_runs, freeHitPending: false, currentOverBalls: 0,
         lastOverBowlerId: null, bowlerLegalBalls: {},
         strikerId: first.striker_id, nonStrikerId: first.non_striker_id, battersRetiredHurt: [],
+        // Rebuilt ball-by-ball below, exactly like bowlerLegalBalls — never
+        // decremented in place, or undo would leave a batter's quota adrift.
+        batterLegalBalls: {}, battersCompleted: [],
       };
+
+      // Rotation mode: a voluntary retirement or a withdrawal is NOT a delivery,
+      // so it leaves no trace in the ball stream and a pure replay would hand
+      // those batters their innings back. rotation_slots is the durable record
+      // of those two reasons, so seed from it before replaying.
+      if (rules.solo_batting?.enabled) {
+        const offBook = await client.query(
+          `SELECT player_id FROM rotation_slots
+            WHERE match_id = $1 AND ended_reason IN ('voluntary','withdrawn')
+            ORDER BY bat_order`,
+          [match.id],
+        );
+        engine.battersCompleted = offBook.rows.map((r: any) => r.player_id);
+      }
       for (const b of balls) {
         // Trust recorded striker/bowler (corrections may have changed rotation)
         engine.strikerId = b.striker_id;
@@ -1961,6 +2056,13 @@ export class ScoringService {
     matchId: string,
     rules: FormatRules,
   ): Promise<FormatRules> {
+    // Rotation mode deliberately sets players_per_side = batter_count + 1 and
+    // wickets_to_fall = batter_count, which is exactly the shape this helper
+    // looks for. Left alone it would rewrite both from the squad counts and
+    // re-arm the last-man-standing branch the +1 exists to disable. (It would
+    // currently bail out anyway, because it needs two teams of equal size and
+    // rotation puts the whole pool on one — but that is luck, not intent.)
+    if (rules.solo_batting?.enabled) return rules;
     if (rules.wickets_to_fall !== rules.players_per_side - 1) return rules;
 
     const counts = (

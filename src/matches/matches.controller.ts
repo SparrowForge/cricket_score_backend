@@ -11,6 +11,7 @@ import { JwtAuthGuard, JwtPayload } from '../auth/jwt-auth.guard';
 import { AccessService, CurrentUser } from '../common/auth';
 import { Public } from '../common/public.decorator';
 import { MatchesService } from './matches.service';
+import { RotationService } from './rotation.service';
 import { ScoringService } from './scoring.service';
 import { StatsService } from './stats.service';
 
@@ -202,6 +203,49 @@ class EditBallDto {
   @IsOptional() @IsIn(['striker_end', 'non_striker_end']) wicket_broken_end?: string;
 }
 
+// ---- rotation (gully) mode ----
+class CreateRotationMatchDto {
+  @IsOptional() @IsDateString() scheduled_start?: string;
+  @IsOptional() @IsUUID() venue_id?: string;
+  @IsOptional() @IsInt() match_number?: number;
+}
+
+class RotationRosterDto {
+  /** Every player in the pool. Array order is the batting order unless shuffle_order is set. */
+  @IsArray() @ArrayMinSize(2) @IsUUID('4', { each: true }) player_ids!: string[];
+  /** Play with a subset of those selected, e.g. 5 of the 10 who turned up. */
+  @IsOptional() @IsInt() @Min(2) @Max(30) active_count?: number;
+  @IsInt() @Min(1) @Max(20) overs_per_batter!: number;
+  @IsOptional() @IsInt() @Min(1) @Max(12) balls_per_over?: number;
+  @IsOptional() @IsBoolean() shuffle_order?: boolean;
+  /** {"one_tip_one_hand":true,"lbw_enabled":false,"boundary_out":false} */
+  @IsOptional() @IsObject() house_rules?: Record<string, unknown>;
+}
+
+class RotationStartDto {
+  /** Defaults to bat_order 1 — the common case is a single tap. */
+  @IsOptional() @IsUUID() striker_id?: string;
+  @IsUUID() bowler_id!: string;
+}
+
+class RotationBowlerDto {
+  @IsUUID() bowler_id!: string;
+}
+
+class RotationRetireDto {
+  /** Defaults to the batter at the crease. */
+  @IsOptional() @IsUUID() player_id?: string;
+  @IsOptional() @IsIn(['voluntary', 'withdrawn']) reason?: 'voluntary' | 'withdrawn';
+}
+
+class RotationWithdrawDto {
+  @IsUUID() player_id!: string;
+}
+
+class RotationOversDto {
+  @IsInt() @Min(1) @Max(20) overs_per_batter!: number;
+}
+
 // ---------------- Controller ----------------
 @ApiTags('Matches & Scoring')
 @Controller()
@@ -211,7 +255,81 @@ export class MatchesController {
     private readonly scoring: ScoringService,
     private readonly stats: StatsService,
     private readonly access: AccessService,
+    private readonly rotation: RotationService,
   ) {}
+
+  // ---- rotation (gully) mode ----
+  /** Create a standalone rotation match — no tournament, no teams, just a pool of players. */
+  @Post('orgs/:orgId/rotation-matches')
+  @UseGuards(JwtAuthGuard)
+  async createRotation(
+    @Param('orgId', ParseUUIDPipe) orgId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: CreateRotationMatchDto,
+  ) {
+    await this.access.assertOrgMember(orgId, user);
+    return this.rotation.createMatch(orgId, dto);
+  }
+
+  /** Pick the pool, the active count and the overs per batter. Idempotent; locked once live. */
+  @Put('matches/:id/rotation/roster')
+  @UseGuards(JwtAuthGuard)
+  async rotationRoster(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload, @Body() dto: RotationRosterDto) {
+    await this.access.assertMatchOrgMember(id, user);
+    return this.rotation.setRoster(id, dto);
+  }
+
+  /** Start the match: first batter + first bowler. Replaces toss and openers. */
+  @Post('matches/:id/rotation/start')
+  @UseGuards(JwtAuthGuard)
+  async rotationStart(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload, @Body() dto: RotationStartDto) {
+    await this.access.assertCanScore(id, user);
+    return this.rotation.start(id, dto);
+  }
+
+  /** Set the bowler for the coming over (validated at selection time, not on the first ball). */
+  @Post('matches/:id/rotation/bowler')
+  @UseGuards(JwtAuthGuard)
+  async rotationBowler(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload, @Body() dto: RotationBowlerDto) {
+    await this.access.assertCanScore(id, user);
+    return this.rotation.setBowler(id, dto);
+  }
+
+  /** Ranked "who bowls next" suggestions, plus who is currently ineligible and why. */
+  @Public() @Get('matches/:id/rotation/next-bowler')
+  rotationNextBowler(@Param('id', ParseUUIDPipe) id: string) {
+    return this.rotation.nextBowler(id);
+  }
+
+  /** The batter at the crease stops early. Consumes their slot; charges no bowler. */
+  @Post('matches/:id/rotation/retire')
+  @UseGuards(JwtAuthGuard)
+  async rotationRetire(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload, @Body() dto: RotationRetireDto) {
+    await this.access.assertCanScore(id, user);
+    return this.rotation.retire(id, dto);
+  }
+
+  /** A player leaves mid-match — shortens the innings and redistributes their overs. */
+  @Post('matches/:id/rotation/withdraw')
+  @UseGuards(JwtAuthGuard)
+  async rotationWithdraw(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload, @Body() dto: RotationWithdrawDto) {
+    await this.access.assertMatchOrgMember(id, user);
+    return this.rotation.withdraw(id, dto);
+  }
+
+  /** Shorten (or lengthen) every batter's allotment mid-match. */
+  @Patch('matches/:id/rotation/overs')
+  @UseGuards(JwtAuthGuard)
+  async rotationOvers(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload, @Body() dto: RotationOversDto) {
+    await this.access.assertMatchOrgMember(id, user);
+    return this.rotation.setOversPerBatter(id, dto.overs_per_batter);
+  }
+
+  /** The batting order and per-slot progress. */
+  @Public() @Get('matches/:id/rotation/slots')
+  rotationSlots(@Param('id', ParseUUIDPipe) id: string) {
+    return this.rotation.slots(id);
+  }
 
   // ---- public reads ----
   /** Public match list (filter by tournament / org / status). */
