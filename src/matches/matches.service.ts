@@ -141,7 +141,19 @@ export class MatchesService {
         await this.pool.query(`SELECT rules FROM match_formats WHERE id = $1`, [dto.format_id])
       ).rows[0];
       if (!format) throw new BadRequestException('Unknown format_id');
-      rulesSnapshot = JSON.stringify(deepMerge(format.rules, dto.rule_overrides ?? {}));
+      // Gully is selectable in the format list so it is discoverable, but a
+      // solo-batting ruleset in a normal two-batter match is incoherent: the
+      // engine would enforce a per-batter ball quota and refuse the batter as
+      // bowler while the scorer is still being asked for a non-striker. Rotation
+      // matches have their own creation path, which also provisions the pool.
+      const merged = deepMerge(format.rules, dto.rule_overrides ?? {});
+      if ((merged as any)?.solo_batting?.enabled) {
+        throw new BadRequestException(
+          'Gully (rotation) matches cannot be created as tournament fixtures — '
+          + 'use POST /orgs/:orgId/rotation-matches instead.',
+        );
+      }
+      rulesSnapshot = JSON.stringify(merged);
     }
 
     const res = await this.pool.query(

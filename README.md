@@ -116,6 +116,11 @@ npm run build && npm run openapi
 
 ## Deploy
 
+> **The live deployment is cPanel shared hosting (LiteSpeed + Phusion
+> Passenger).** Build and ship it with `npm run release` — see
+> [`BUILD.md`](BUILD.md). The Render/Vercel notes below describe an earlier
+> plan and are not how the API runs today.
+
 [`render.yaml`](render.yaml) deploys this service on Render as the realtime
 node (`/health` is the health check). The REST API can additionally run on
 Vercel — both share the same Neon and Upstash instances, and the Socket.IO

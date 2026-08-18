@@ -103,8 +103,22 @@ export class RotationService {
    * players_per_side === batter_count it would seize both ends on the
    * second-to-last batter and the final batter would never get to bat.
    */
-  static buildRules(batterCount: number, oversPerBatter: number, ballsPerOver: number, house: Record<string, any> = {}): FormatRules {
+  static buildRules(
+    batterCount: number,
+    oversPerBatter: number,
+    ballsPerOver: number,
+    house: Record<string, any> = {},
+    template: Record<string, any> | null = null,
+  ): FormatRules {
     const totalOvers = batterCount * oversPerBatter;
+    // The `gully` row in match_formats supplies the editable defaults; only the
+    // roster-dependent numbers below are computed, because they depend on how
+    // many people turned up. A missing row is not fatal — the literals here are
+    // the same values the migration seeds, so an un-migrated database still
+    // scores a gully match correctly.
+    const t = template ?? {};
+    const tSolo = (t.solo_batting ?? {}) as Record<string, any>;
+    const tGully = (t.gully ?? {}) as Record<string, any>;
     return {
       innings_per_side: 1,
       overs_per_innings: totalOvers,
@@ -114,29 +128,46 @@ export class RotationService {
       // Everyone bowls an equal share; ceil so the overs are always reachable
       // even when the pool does not divide evenly.
       max_overs_per_bowler: Math.ceil(totalOvers / Math.max(1, batterCount)),
-      powerplays: [],
-      super_over: { enabled: false },
-      dls: { enabled: false },
-      follow_on: { enabled: false },
-      declaration_allowed: false,
-      no_ball: { runs: 1, free_hit: false },
-      wide: { runs: 1 },
-      twelfth_man: { allowed: false },
+      powerplays: t.powerplays ?? [],
+      super_over: t.super_over ?? { enabled: false },
+      dls: t.dls ?? { enabled: false },
+      follow_on: t.follow_on ?? { enabled: false },
+      declaration_allowed: t.declaration_allowed ?? false,
+      no_ball: t.no_ball ?? { runs: 1, free_hit: false },
+      wide: t.wide ?? { runs: 1 },
+      twelfth_man: t.twelfth_man ?? { allowed: false },
       solo_batting: {
         enabled: true,
         batter_count: batterCount,
         balls_per_batter: oversPerBatter * ballsPerOver,
-        retire_on_quota: true,
-        bowler_may_be_batter: false,
+        retire_on_quota: tSolo.retire_on_quota ?? true,
+        bowler_may_be_batter: tSolo.bowler_may_be_batter ?? false,
       },
+      // Scorer's toggles win over the format's defaults, which win over ours.
       gully: {
-        one_tip_one_hand: house.one_tip_one_hand ?? true,
-        lbw_enabled: house.lbw_enabled ?? false,
-        last_batter_doubles: house.last_batter_doubles ?? false,
-        boundary_out: house.boundary_out ?? false,
+        one_tip_one_hand: house.one_tip_one_hand ?? tGully.one_tip_one_hand ?? true,
+        lbw_enabled: house.lbw_enabled ?? tGully.lbw_enabled ?? false,
+        last_batter_doubles: house.last_batter_doubles ?? tGully.last_batter_doubles ?? false,
+        boundary_out: house.boundary_out ?? tGully.boundary_out ?? false,
       },
-      mvp_profile: 'gully_v1',
+      mvp_profile: t.mvp_profile ?? 'gully_v1',
     } as unknown as FormatRules;
+  }
+
+  /**
+   * The built-in `gully` format row, or null when the database predates
+   * migration 25. Org-specific overrides win over the built-in, matching how
+   * every other format is resolved.
+   */
+  private async gullyTemplate(client: PoolClient, orgId: string): Promise<Record<string, any> | null> {
+    const r = await client.query(
+      `SELECT rules FROM match_formats
+        WHERE slug = 'gully' AND (organization_id = $1 OR organization_id IS NULL)
+        ORDER BY organization_id NULLS LAST, version DESC
+        LIMIT 1`,
+      [orgId],
+    );
+    return r.rows[0]?.rules ?? null;
   }
 
   // ----------------------------------------------------------------- create
@@ -215,8 +246,10 @@ export class RotationService {
 
       const active = unique.slice(0, activeCount);
       const order = dto.shuffle_order ? shuffled(active) : active;
-      const ballsPerOver = dto.balls_per_over ?? 6;
-      const rules = RotationService.buildRules(order.length, dto.overs_per_batter, ballsPerOver, dto.house_rules ?? {});
+      const template = await this.gullyTemplate(client, match.organization_id);
+      const ballsPerOver = dto.balls_per_over ?? (template?.balls_per_over as number) ?? 6;
+      const rules = RotationService.buildRules(
+        order.length, dto.overs_per_batter, ballsPerOver, dto.house_rules ?? {}, template);
       const ballsPerBatter = dto.overs_per_batter * ballsPerOver;
 
       // Rebuild from scratch so the call is idempotent.
