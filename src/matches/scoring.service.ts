@@ -712,14 +712,16 @@ export class ScoringService {
       const solo = rules?.solo_batting?.enabled === true;
       const dismissed = ls.pending_new_batter;
 
-      // For gully cricket mid-over dismissals: if user selects "start new over",
-      // reset the over counter to 0 so the next bowler starts a fresh over.
-      if (solo && dto.over_action === 'new_over' && ls.engine.currentOverBalls > 0) {
-        // Reset the over balls counter for a fresh over start
-        ls.engine.currentOverBalls = 0;
-        // Note: lastOverBowlerId stays as is - it represents the bowler of the
-        // last COMPLETED over, not the incomplete one being reset
-      }
+      // NOTE: dto.over_action is accepted but deliberately does NOT reset
+      // engine.currentOverBalls. over_number, over_summaries and the overs
+      // figure are all derived from legalBalls, so an over is exactly
+      // balls_per_over legal deliveries and `currentOverBalls === legalBalls %
+      // balls_per_over` is a load-bearing invariant. Zeroing it mid-over
+      // desyncs over_complete from the over boundary (end-of-over commentary
+      // and maiden marking then fire mid-over) and is silently discarded by
+      // replayInnings, which rebuilds the engine from the ball stream.
+      // Truncating an over needs over_number to become an explicit counter
+      // rather than a derived one — a schema-level change, not a patch here.
 
       if (solo) {
         // Rotation mode: the outgoing batter occupies BOTH ends, so replacing
