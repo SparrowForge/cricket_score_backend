@@ -2,11 +2,21 @@ import {
   Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { IsEmail, IsIn, IsNotEmpty, IsObject, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsEmail, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, Max,
+  MaxLength, Min, ValidateNested,
+} from 'class-validator';
 import { JwtAuthGuard, JwtPayload } from '../auth/jwt-auth.guard';
 import { AccessService, CurrentUser } from '../common/auth';
+import { OrgProfileDto } from './org-profile.dto';
 import { OrgsService } from './orgs.service';
 
+/**
+ * Quick club creation: name + logo + city, nothing else. Everything on the
+ * Profile tab is filled in later through PATCH, per the progressive-onboarding
+ * design — do not grow this DTO.
+ */
 class CreateOrgDto {
   @IsString() @IsNotEmpty() @MaxLength(120)
   name!: string;
@@ -17,17 +27,42 @@ class CreateOrgDto {
 
   @IsOptional() @IsString()
   logo_url?: string;
+
+  @IsOptional() @IsString() @MaxLength(80)
+  city?: string;
 }
 
-class UpdateOrgDto {
+/** Seeds the create-match form. A live match reads its own frozen
+ *  rules_snapshot, so changing this never affects a match already created. */
+class DefaultMatchDto {
+  @IsOptional() @IsInt() @Min(1) @Max(100) overs_per_innings?: number;
+  @IsOptional() @IsInt() @Min(2) @Max(30) players_per_side?: number;
+  @IsOptional() @IsUUID() format_id?: string;
+}
+
+/** organizations.settings — app behaviour, not profile content. Replaced
+ *  wholesale on PATCH, so send the object you want to end up with. */
+class OrgAppSettingsDto {
+  @IsOptional() @ValidateNested() @Type(() => DefaultMatchDto)
+  default_match?: DefaultMatchDto;
+
+  @IsOptional() @IsIn(['admin_only', 'assigned_scorer'])
+  scoring_permission?: string;
+}
+
+/**
+ * Identity + the whole club profile. Inherits every profile field from
+ * OrgProfileDto; a field left out is untouched, an explicit null clears it.
+ */
+class UpdateOrgDto extends OrgProfileDto {
   @IsOptional() @IsString() @MaxLength(120)
   name?: string;
 
-  @IsOptional() @IsString()
+  @IsOptional() @IsString() @MaxLength(500)
   logo_url?: string;
 
-  @IsOptional() @IsObject()
-  settings?: object;
+  @IsOptional() @ValidateNested() @Type(() => OrgAppSettingsDto)
+  settings?: OrgAppSettingsDto;
 }
 
 class AddMemberDto {

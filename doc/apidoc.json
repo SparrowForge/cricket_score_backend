@@ -767,6 +767,106 @@
         ]
       }
     },
+    "/api/v1/clubs": {
+      "get": {
+        "operationId": "PublicClubsController_list",
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "city",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "country",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Clubs"
+        ]
+      }
+    },
+    "/api/v1/clubs/cities": {
+      "get": {
+        "operationId": "PublicClubsController_cities",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Clubs"
+        ]
+      }
+    },
+    "/api/v1/clubs/{slug}": {
+      "get": {
+        "operationId": "PublicClubsController_profile",
+        "parameters": [
+          {
+            "name": "slug",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Clubs"
+        ]
+      }
+    },
     "/api/v1/plans": {
       "get": {
         "operationId": "PlansController_publicPlans",
@@ -1999,6 +2099,39 @@
         ]
       }
     },
+    "/api/v1/tournaments/{id}/generate-matches": {
+      "post": {
+        "operationId": "TournamentsController_generateMatches",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateMatchesDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Tournaments"
+        ]
+      }
+    },
     "/api/v1/tournaments/{id}/fixtures/confirm": {
       "post": {
         "operationId": "TournamentsController_confirm",
@@ -2029,6 +2162,314 @@
         },
         "tags": [
           "Tournaments"
+        ]
+      }
+    },
+    "/api/v1/orgs/{orgId}/rotation-matches": {
+      "post": {
+        "operationId": "MatchesController_createRotation",
+        "parameters": [
+          {
+            "name": "orgId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRotationMatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/rotation/candidates": {
+      "get": {
+        "operationId": "MatchesController_rotationCandidates",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/rotation/roster": {
+      "put": {
+        "operationId": "MatchesController_rotationRoster",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotationRosterDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/rotation/start": {
+      "post": {
+        "operationId": "MatchesController_rotationStart",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotationStartDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/rotation/bowler": {
+      "post": {
+        "operationId": "MatchesController_rotationBowler",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotationBowlerDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/rotation/next-bowler": {
+      "get": {
+        "operationId": "MatchesController_rotationNextBowler",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/rotation/retire": {
+      "post": {
+        "operationId": "MatchesController_rotationRetire",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotationRetireDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/rotation/withdraw": {
+      "post": {
+        "operationId": "MatchesController_rotationWithdraw",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotationWithdrawDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/rotation/overs": {
+      "patch": {
+        "operationId": "MatchesController_rotationOvers",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotationOversDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
+        ]
+      }
+    },
+    "/api/v1/matches/{id}/rotation/slots": {
+      "get": {
+        "operationId": "MatchesController_rotationSlots",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Matches & Scoring"
         ]
       }
     },
@@ -3977,7 +4418,39 @@
         "type": "object",
         "properties": {}
       },
+      "GenerateMatchesDto": {
+        "type": "object",
+        "properties": {}
+      },
       "ConfirmFixturesDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateRotationMatchDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "RotationRosterDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "RotationStartDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "RotationBowlerDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "RotationRetireDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "RotationWithdrawDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "RotationOversDto": {
         "type": "object",
         "properties": {}
       },

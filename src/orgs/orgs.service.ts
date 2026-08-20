@@ -2,23 +2,32 @@ import { BadRequestException, ConflictException, Inject, Injectable, NotFoundExc
 import { Pool } from 'pg';
 import { PG_POOL } from '../database/database.module';
 import { JwtPayload } from '../auth/jwt-auth.guard';
+import {
+  ORG_ENUM_COLUMNS, ORG_JSON_COLUMNS, ORG_NUMBER_COLUMNS, ORG_TEXT_COLUMNS,
+  OrgProfileDto,
+} from './org-profile.dto';
+
+/** Columns returned on the club list / directory cards. */
+const ORG_CARD_COLUMNS = `o.id, o.name, o.slug, o.short_name, o.logo_url, o.banner_url,
+       o.org_type, o.city, o.division, o.country, o.established_year, o.status,
+       o.visibility, o.owner_user_id, o.created_at`;
 
 @Injectable()
 export class OrgsService {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
   /** Creates the org, owner membership, tournament_admin grant, and a free-plan subscription. */
-  async create(user: JwtPayload, dto: { name: string; slug: string; logo_url?: string }) {
+  async create(user: JwtPayload, dto: { name: string; slug: string; logo_url?: string; city?: string }) {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       const org = (
         await client.query(
-          `INSERT INTO organizations (name, slug, logo_url, owner_user_id)
-           VALUES ($1, $2, $3, $4)
+          `INSERT INTO organizations (name, slug, logo_url, city, owner_user_id)
+           VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (slug) DO NOTHING
            RETURNING *`,
-          [dto.name, dto.slug, dto.logo_url ?? null, user.sub],
+          [dto.name, dto.slug, dto.logo_url ?? null, dto.city?.trim() || null, user.sub],
         )
       ).rows[0];
       if (!org) throw new ConflictException('Slug already taken');
@@ -52,7 +61,7 @@ export class OrgsService {
 
   async mine(user: JwtPayload) {
     const res = await this.pool.query(
-      `SELECT o.id, o.name, o.slug, o.logo_url, o.owner_user_id, o.created_at,
+      `SELECT ${ORG_CARD_COLUMNS},
               (o.owner_user_id = $1) AS is_owner,
               p.slug AS plan
        FROM organizations o
@@ -79,14 +88,55 @@ export class OrgsService {
     return res.rows[0];
   }
 
-  async update(id: string, dto: { name?: string; logo_url?: string; settings?: object }) {
+  /**
+   * PATCH semantics, not PUT: only the keys actually sent are written. A key
+   * sent as null (or '' for text) clears the column — which is why this builds
+   * its SET list dynamically instead of `coalesce($n, col)`, where null can
+   * only ever mean "leave alone" and a field could never be emptied.
+   *
+   * The five jsonb groups are replaced whole rather than merged, so the form
+   * section that owns a group can drop a field by omitting it.
+   */
+  async update(
+    id: string,
+    dto: OrgProfileDto & { name?: string; logo_url?: string; settings?: object },
+  ) {
+    const sets: string[] = [];
+    const values: unknown[] = [id];
+    const push = (col: string, value: unknown, cast = '') => {
+      values.push(value);
+      sets.push(`${col} = $${values.length}${cast}`);
+    };
+    const record = dto as Record<string, unknown>;
+    /** '' means "clear this" for a text field; null and '' both land as NULL. */
+    const text = (v: unknown) => {
+      const trimmed = typeof v === 'string' ? v.trim() : v;
+      return trimmed === '' ? null : trimmed ?? null;
+    };
+
+    if (dto.name !== undefined) push('name', dto.name.trim());
+    if (dto.logo_url !== undefined) push('logo_url', text(dto.logo_url));
+    if (dto.settings !== undefined) push('settings', JSON.stringify(dto.settings), '::jsonb');
+
+    for (const col of ORG_TEXT_COLUMNS) {
+      if (record[col] !== undefined) push(col, text(record[col]));
+    }
+    for (const col of ORG_NUMBER_COLUMNS) {
+      if (record[col] !== undefined) push(col, record[col] ?? null);
+    }
+    for (const [col, type] of Object.entries(ORG_ENUM_COLUMNS)) {
+      if (record[col] !== undefined) push(col, record[col], `::${type}`);
+    }
+    for (const col of ORG_JSON_COLUMNS) {
+      if (record[col] !== undefined) push(col, JSON.stringify(record[col] ?? {}), '::jsonb');
+    }
+
+    if (sets.length === 0) return this.get(id);
+
     const res = await this.pool.query(
-      `UPDATE organizations SET
-         name = coalesce($2, name),
-         logo_url = coalesce($3, logo_url),
-         settings = coalesce($4, settings)
+      `UPDATE organizations SET ${sets.join(', ')}
        WHERE id = $1 AND deleted_at IS NULL RETURNING *`,
-      [id, dto.name ?? null, dto.logo_url ?? null, dto.settings ? JSON.stringify(dto.settings) : null],
+      values,
     );
     if (res.rowCount === 0) throw new NotFoundException('Organization not found');
     return res.rows[0];
@@ -169,5 +219,80 @@ export class OrgsService {
       [orgId, userId],
     );
     return { removed: true };
+  }
+
+  /* ================= Public club directory =================
+   * Unauthenticated. Only active + public clubs are visible; `visibility`
+   * hides the club itself, never its matches (those follow their tournament).
+   */
+
+  /** Directory listing, newest-first, with optional text / city / country / type filters. */
+  async publicList(opts: { q?: string; city?: string; country?: string; type?: string; limit: number; offset: number }) {
+    const where = [`o.deleted_at IS NULL`, `o.status = 'active'`, `o.visibility = 'public'`];
+    const values: unknown[] = [];
+    const bind = (v: unknown) => `$${values.push(v)}`;
+
+    const q = opts.q?.trim();
+    if (q) {
+      const like = bind(`%${q}%`);
+      where.push(`(o.name ILIKE ${like} OR o.short_name ILIKE ${like} OR o.city ILIKE ${like})`);
+    }
+    if (opts.city?.trim()) where.push(`lower(o.city) = lower(${bind(opts.city.trim())})`);
+    if (opts.country?.trim()) where.push(`lower(o.country) = lower(${bind(opts.country.trim())})`);
+    if (opts.type) where.push(`o.org_type = ${bind(opts.type)}::org_type`);
+
+    const res = await this.pool.query(
+      `SELECT ${ORG_CARD_COLUMNS.replace('o.owner_user_id, ', '')}
+       FROM organizations o
+       WHERE ${where.join(' AND ')}
+       ORDER BY o.name
+       LIMIT ${bind(opts.limit)} OFFSET ${bind(opts.offset)}`,
+      values,
+    );
+    return res.rows;
+  }
+
+  /** Distinct cities that actually have a listed club — populates the filter. */
+  async publicCities() {
+    const res = await this.pool.query(
+      `SELECT o.city, count(*)::int AS clubs
+       FROM organizations o
+       WHERE o.deleted_at IS NULL AND o.status = 'active' AND o.visibility = 'public'
+         AND o.city IS NOT NULL AND o.city <> ''
+       GROUP BY o.city ORDER BY clubs DESC, o.city`,
+    );
+    return res.rows;
+  }
+
+  /**
+   * Public club profile by slug. Deliberately does not select `settings`,
+   * `owner_user_id` or the plan — those are tenant internals, not profile.
+   */
+  async publicProfile(slug: string) {
+    const res = await this.pool.query(
+      `SELECT o.id, o.name, o.slug, o.short_name, o.logo_url, o.banner_url,
+              o.org_type, o.established_year, o.description,
+              o.country, o.division, o.city, o.address_line, o.postal_code,
+              o.latitude, o.longitude, o.home_ground,
+              o.contact_name, o.contact_designation, o.contact_phone,
+              o.contact_phone_alt, o.contact_email, o.website_url,
+              o.registration - 'tax_id' AS registration,
+              o.cricket_details, o.facilities, o.achievements, o.social,
+              o.created_at,
+              (SELECT count(*)::int FROM teams t
+                WHERE t.organization_id = o.id AND t.deleted_at IS NULL AND NOT t.is_synthetic) AS team_count,
+              (SELECT count(*)::int FROM players pl
+                WHERE pl.organization_id = o.id AND pl.deleted_at IS NULL) AS player_count,
+              (SELECT count(*)::int FROM tournaments tr
+                WHERE tr.organization_id = o.id AND tr.deleted_at IS NULL AND tr.is_public) AS tournament_count,
+              (SELECT count(*)::int FROM matches m
+                WHERE m.organization_id = o.id AND m.status = 'completed') AS matches_played
+       FROM organizations o
+       WHERE o.slug = $1 AND o.deleted_at IS NULL
+         AND o.status = 'active' AND o.visibility = 'public'`,
+      [slug],
+    );
+    if (res.rowCount === 0) throw new NotFoundException('Club not found');
+    return res.rows[0];
   }
 }
