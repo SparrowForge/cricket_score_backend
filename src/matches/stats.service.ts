@@ -80,6 +80,39 @@ export class StatsService {
     }
   }
 
+  /**
+   * Rebuild every derived figure for an already-finalised match from its ball
+   * data: the per-match facts as well as MVP, tournament and career rollups.
+   *
+   * Use this — not `finalizeMatch` — to repair a match after a bug in the
+   * derivation itself. `finalizeMatch` also runs `notifyFollowers`, and
+   * `notifications` has no unique constraint, so replaying it would send every
+   * follower a duplicate "match finished" alert. Head-to-head and the points
+   * table are left alone: both come from the result, which this cannot change.
+   */
+  async recalculateMatchStats(matchId: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const match = (await client.query(`SELECT * FROM matches WHERE id = $1`, [matchId])).rows[0];
+      if (!match) return;
+
+      await this.buildPlayerMatchStats(client, match);
+      await this.buildMvpPoints(client, matchId);
+      if (match.tournament_id) {
+        await this.rebuildTournamentStats(client, match.tournament_id);
+      }
+      await this.rebuildCareerStats(client, matchId);
+      await client.query('COMMIT');
+      this.logger.log(`Stats recalculated for match ${matchId}`);
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   // ---------- per-match facts ----------
   private async buildPlayerMatchStats(client: PoolClient, match: any) {
     await client.query(`DELETE FROM player_match_stats WHERE match_id = $1`, [match.id]);
@@ -97,6 +130,15 @@ export class StatsService {
                 count(*) FILTER (WHERE is_boundary_six)::int AS sixes,
                 min(seq) AS first_ball
          FROM b GROUP BY striker_id, batting_team_id
+       ),
+       -- A batter counts as having batted from the moment they reach the
+       -- crease, even if the innings ends before they face a delivery. Keying
+       -- off striker rows alone left the last batter in — 0* at the
+       -- non-striker's end — with no player_match_stats row at all, so the
+       -- innings never reached their not-outs, MVP or career totals.
+       crease AS (
+         SELECT non_striker_id AS player_id, batting_team_id AS team_id, min(seq) AS first_ball
+         FROM b GROUP BY non_striker_id, batting_team_id
        ),
        dismissals AS (
          SELECT dismissed_player_id AS player_id, max(wicket_type::text) AS wicket_type
@@ -146,6 +188,7 @@ export class StatsService {
          SELECT player_id, (array_agg(team_id ORDER BY src))[1] AS team_id
          FROM (
            SELECT player_id, team_id, 1 AS src FROM batting
+           UNION ALL SELECT player_id, team_id, 1 FROM crease
            UNION ALL SELECT player_id, team_id, 2 FROM bowling
            UNION ALL SELECT player_id, team_id, 3 FROM fielding
          ) roles
@@ -156,7 +199,8 @@ export class StatsService {
          bowled, balls_bowled, runs_conceded, wickets_taken, maidens, wides_bowled, no_balls_bowled, dot_balls,
          catches, stumpings, run_outs)
        SELECT $1, $2, ap.player_id, ap.team_id,
-              bat.player_id IS NOT NULL, coalesce(bat.runs,0), coalesce(bat.balls,0),
+              bat.player_id IS NOT NULL OR cr.player_id IS NOT NULL,
+              coalesce(bat.runs,0), coalesce(bat.balls,0),
               coalesce(bat.fours,0), coalesce(bat.sixes,0),
               d.player_id IS NOT NULL, d.wicket_type::wicket_type, NULL,
               bo.player_id IS NOT NULL, coalesce(bo.balls_bowled,0), coalesce(bo.runs_conceded,0),
@@ -169,6 +213,7 @@ export class StatsService {
        -- would silently zero out every gully bowling and fielding figure.
        FROM all_players ap
        LEFT JOIN batting bat ON bat.player_id = ap.player_id
+       LEFT JOIN crease cr ON cr.player_id = ap.player_id
        LEFT JOIN dismissals d ON d.player_id = ap.player_id
        LEFT JOIN bowling bo ON bo.player_id = ap.player_id
        LEFT JOIN maidens m ON m.player_id = ap.player_id
@@ -350,7 +395,7 @@ export class StatsService {
     await client.query(
       `WITH leaders AS (
          SELECT (SELECT pms.player_id FROM player_match_stats pms
-                  WHERE pms.match_id = $1 AND pms.batted
+                  WHERE pms.match_id = $1 AND pms.batted AND pms.balls_faced > 0
                   ORDER BY pms.runs_scored DESC, pms.balls_faced ASC LIMIT 1) AS top_bat,
                 (SELECT pms.player_id FROM player_match_stats pms
                   WHERE pms.match_id = $1 AND pms.bowled AND pms.wickets_taken > 0

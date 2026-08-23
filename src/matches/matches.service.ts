@@ -678,35 +678,46 @@ export class MatchesService {
     for (const inn of innings) {
       inn.batting = (
         await this.pool.query(
-          `SELECT id, full_name, balls, runs, fours, sixes, is_out, dismissal
-           FROM (
-             -- Batters who faced at least one delivery as striker
-             SELECT p.id, p.full_name,
-                    min(b.seq) AS first_seq, 0 AS tie_break,
-                    count(*) FILTER (WHERE b.is_legal OR b.extra_type = 'no_ball')::int AS balls,
-                    coalesce(sum(b.runs_batter),0)::int AS runs,
-                    count(*) FILTER (WHERE b.is_boundary_four)::int AS fours,
-                    count(*) FILTER (WHERE b.is_boundary_six)::int AS sixes,
-                    false AS is_out, null::text AS dismissal
-             FROM balls b JOIN players p ON p.id = b.striker_id
-             WHERE b.innings_id = $1 AND NOT b.is_superseded
-             GROUP BY p.id, p.full_name
+          // A batter counts as having batted the moment they reach the crease,
+          // even if the innings ends before they face a delivery — so the card
+          // is driven by crease APPEARANCES (striker, non-striker or dismissed),
+          // not by deliveries faced. Deriving it from striker rows alone used to
+          // drop the last batter in, left 0* at the non-striker's end.
+          // tie_break puts the striker ahead of the non-striker when both first
+          // appear on the same delivery, so the card reads in batting order.
+          `WITH live AS (
+             SELECT * FROM balls WHERE innings_id = $1 AND NOT is_superseded
+           ),
+           appearances AS (
+             SELECT striker_id AS player_id, min(seq) AS first_seq, 0 AS tie_break
+             FROM live GROUP BY striker_id
              UNION ALL
-             -- Non-striker batters dismissed before facing any delivery as striker
-             SELECT p.id, p.full_name,
-                    min(b.seq) AS first_seq, 1 AS tie_break,
-                    0::int AS balls, 0::int AS runs,
-                    0::int AS fours, 0::int AS sixes,
-                    false AS is_out, null::text AS dismissal
-             FROM balls b JOIN players p ON p.id = b.dismissed_player_id
-             WHERE b.innings_id = $1 AND b.is_wicket AND NOT b.is_superseded
-               AND b.dismissed_player_id IS NOT NULL
-               AND b.dismissed_player_id NOT IN (
-                 SELECT striker_id FROM balls WHERE innings_id = $1 AND NOT is_superseded
-               )
-             GROUP BY p.id, p.full_name
-           ) batters
-           ORDER BY first_seq, tie_break`,
+             SELECT non_striker_id, min(seq), 1 FROM live GROUP BY non_striker_id
+             UNION ALL
+             SELECT dismissed_player_id, min(seq), 1 FROM live
+             WHERE is_wicket AND dismissed_player_id IS NOT NULL
+             GROUP BY dismissed_player_id
+           ),
+           crease AS (
+             SELECT DISTINCT ON (player_id) player_id, first_seq, tie_break
+             FROM appearances ORDER BY player_id, first_seq, tie_break
+           ),
+           faced AS (
+             SELECT striker_id AS player_id,
+                    count(*) FILTER (WHERE is_legal OR extra_type = 'no_ball')::int AS balls,
+                    coalesce(sum(runs_batter),0)::int AS runs,
+                    count(*) FILTER (WHERE is_boundary_four)::int AS fours,
+                    count(*) FILTER (WHERE is_boundary_six)::int AS sixes
+             FROM live GROUP BY striker_id
+           )
+           SELECT p.id, p.full_name,
+                  coalesce(f.balls,0) AS balls, coalesce(f.runs,0) AS runs,
+                  coalesce(f.fours,0) AS fours, coalesce(f.sixes,0) AS sixes,
+                  false AS is_out, null::text AS dismissal
+           FROM crease c
+           JOIN players p ON p.id = c.player_id
+           LEFT JOIN faced f ON f.player_id = c.player_id
+           ORDER BY c.first_seq, c.tie_break`,
           [inn.id],
         )
       ).rows;
