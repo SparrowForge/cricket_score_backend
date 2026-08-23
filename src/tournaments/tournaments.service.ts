@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Inject, Injectable, NotFoundExc
 import { Pool, PoolClient } from 'pg';
 import { deepMerge } from '../common/deep-merge';
 import { PG_POOL } from '../database/database.module';
+import { StatsService } from '../matches/stats.service';
 import { DraftFixture, FixtureConfig, generateFixtures } from './fixture-generator';
 
 /**
@@ -136,7 +137,10 @@ export function normalizeMatchSettings(input: MatchSettings, formatRules: Record
 
 @Injectable()
 export class TournamentsService {
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    private readonly stats: StatsService,
+  ) {}
 
   // ---------- Tournaments ----------
   async list(filter: { org?: string; status?: string }) {
@@ -198,21 +202,58 @@ export class TournamentsService {
   }
 
   async update(id: string, dto: any) {
+    const before = (
+      await this.pool.query(`SELECT format_id FROM tournaments WHERE id = $1 AND deleted_at IS NULL`, [id])
+    ).rows[0];
+    if (!before) throw new NotFoundException('Tournament not found');
+
     const res = await this.pool.query(
       `UPDATE tournaments SET
          name = coalesce($2,name), season = coalesce($3,season), status = coalesce($4::tournament_status,status),
          start_date = coalesce($5,start_date), end_date = coalesce($6,end_date),
          banner_url = coalesce($7,banner_url), description = coalesce($8,description),
          rule_overrides = coalesce($9,rule_overrides), points_rules = coalesce($10,points_rules),
-         is_public = coalesce($11,is_public)
+         is_public = coalesce($11,is_public), format_id = coalesce($12,format_id)
        WHERE id = $1 AND deleted_at IS NULL RETURNING *`,
       [id, dto.name ?? null, dto.season ?? null, dto.status ?? null, dto.start_date ?? null, dto.end_date ?? null,
        dto.banner_url ?? null, dto.description ?? null,
        dto.rule_overrides ? JSON.stringify(dto.rule_overrides) : null,
-       dto.points_rules ? JSON.stringify(dto.points_rules) : null, dto.is_public ?? null],
+       dto.points_rules ? JSON.stringify(dto.points_rules) : null, dto.is_public ?? null,
+       dto.format_id ?? null],
     );
     if (res.rowCount === 0) throw new NotFoundException('Tournament not found');
+
+    // The format decides which career `format_family` this tournament's matches
+    // roll into, and those rows were written back at finalize time. Without
+    // this the change only reaches matches finalised from now on, and every
+    // player who already played here keeps a career row filed under the old
+    // format. Existing matches keep their frozen `rules_snapshot` either way —
+    // this re-files the stats, it does not re-score anything.
+    if (dto.format_id && dto.format_id !== before.format_id) {
+      await this.stats.rebuildCareerStatsForTournament(id);
+    }
     return res.rows[0];
+  }
+
+  /**
+   * Re-file every participant's *career* totals for a tournament that already
+   * has results.
+   *
+   * The repair hatch for career rows that went stale because the family they
+   * were bucketed into changed underneath them — chiefly a format switch. It
+   * is a rebuild from `player_match_stats`, so running it twice is a no-op.
+   *
+   * Scope is deliberately career-only: `player_tournament_stats` and the points
+   * table are not keyed by format family, so a format switch cannot stale them.
+   * Repairing those (after a match deleted straight from the database, say)
+   * needs `rebuildTournamentStats`/`rebuildPointsTable`, which this does not call.
+   */
+  async recalculateStats(id: string) {
+    const t = (
+      await this.pool.query(`SELECT id FROM tournaments WHERE id = $1 AND deleted_at IS NULL`, [id])
+    ).rows[0];
+    if (!t) throw new NotFoundException('Tournament not found');
+    return this.stats.rebuildCareerStatsForTournament(id);
   }
 
   async remove(id: string) {

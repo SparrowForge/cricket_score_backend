@@ -31,6 +31,8 @@ class CreateTournamentDto {
 
 class UpdateTournamentDto {
   @IsOptional() @IsString() @MaxLength(150) name?: string;
+  /** Changing this re-files every participant's career stats into the new format family. */
+  @IsOptional() @IsUUID() format_id?: string;
   @IsOptional() @IsString() season?: string;
   @IsOptional() @IsIn(['draft', 'published', 'in_progress', 'completed', 'archived', 'cancelled']) status?: string;
   @IsOptional() @IsDateString() start_date?: string;
@@ -161,6 +163,17 @@ export class TournamentsController {
   ) {
     await this.access.assertTournamentPermission(id, user, 'tournament:update');
     return this.tournaments.update(id, dto);
+  }
+
+  /** Rebuild career aggregates for everyone who played in this tournament. */
+  @Post('tournaments/:id/recalculate-stats')
+  @UseGuards(JwtAuthGuard)
+  async recalculateStats(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.access.assertTournamentPermission(id, user, 'tournament:update');
+    return this.tournaments.recalculateStats(id);
   }
 
   @Delete('tournaments/:id')

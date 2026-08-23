@@ -541,6 +541,47 @@ export class StatsService {
   }
 
   /**
+   * Re-bucket every participant's career totals after something about a
+   * tournament's identity changed.
+   *
+   * `player_career_stats` is keyed by `(player_id, format_family)`, and the
+   * family is derived from the tournament's format *at the moment the row is
+   * written* — which only ever happens at match finalize. Change the
+   * tournament's format afterwards and the already-written rows keep the old
+   * family: one player ends up with a stale "sixes" row holding three matches
+   * and a "t20" row holding the rest, and the profile shows each half as if it
+   * were the career total (the catch taken in the last match sat in the stale
+   * bucket while the T20 card still read 1).
+   *
+   * Rebuilding every participant folds the whole history back into the right
+   * families. Deliberately not `finalizeMatch`: that would re-send the result
+   * notification to every follower.
+   */
+  async rebuildCareerStatsForTournament(tournamentId: string): Promise<{ players: number }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const players = (
+        await client.query(
+          `SELECT DISTINCT pms.player_id FROM player_match_stats pms
+           JOIN matches m ON m.id = pms.match_id
+           WHERE m.tournament_id = $1`,
+          [tournamentId],
+        )
+      ).rows;
+      await this.rebuildCareerStatsForPlayers(client, players.map((p) => p.player_id));
+      await client.query('COMMIT');
+      this.logger.log(`Career stats rebuilt for ${players.length} player(s) of tournament ${tournamentId}`);
+      return { players: players.length };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
    * Recompute career totals for specific players from their surviving
    * `player_match_stats` rows.
    *
