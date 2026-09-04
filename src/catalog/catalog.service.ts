@@ -286,6 +286,16 @@ export class CatalogService {
         [playerId],
       )
     ).rows[0].n;
+    // The same award one level up, settled when the tournament is marked
+    // completed. `status = 'completed'` matters here too: the pick is seeded on
+    // the transition, and a tournament later reopened has not been won yet.
+    p.player_of_tournament_awards = (
+      await this.pool.query(
+        `SELECT count(*)::int AS n FROM tournaments
+         WHERE player_of_tournament_id = $1 AND status = 'completed' AND deleted_at IS NULL`,
+        [playerId],
+      )
+    ).rows[0].n;
     p.teams = (
       await this.pool.query(
         `SELECT t.id, t.name, t.short_name, t.logo_url

@@ -147,7 +147,7 @@ export class TournamentsService {
     return (
       await this.pool.query(
         `SELECT t.id, t.name, t.slug, t.season, t.status, t.start_date, t.end_date, t.banner_url,
-                t.organization_id, f.name AS format, f.slug AS format_slug,
+                t.organization_id, t.player_of_tournament_id, f.name AS format, f.slug AS format_slug,
                 (SELECT count(*)::int FROM tournament_teams tt WHERE tt.tournament_id = t.id) AS team_count,
                 (SELECT count(*)::int FROM matches m WHERE m.tournament_id = t.id) AS match_count
          FROM tournaments t JOIN match_formats f ON f.id = t.format_id
@@ -182,8 +182,10 @@ export class TournamentsService {
   async get(id: string) {
     const t = (
       await this.pool.query(
-        `SELECT t.*, f.name AS format_name, f.slug AS format_slug, f.rules AS format_rules
+        `SELECT t.*, f.name AS format_name, f.slug AS format_slug, f.rules AS format_rules,
+                pot.full_name AS player_of_tournament_name, pot.photo_url AS player_of_tournament_photo
          FROM tournaments t JOIN match_formats f ON f.id = t.format_id
+         LEFT JOIN players pot ON pot.id = t.player_of_tournament_id
          WHERE t.id = $1 AND t.deleted_at IS NULL`,
         [id],
       )
@@ -201,11 +203,58 @@ export class TournamentsService {
     return t;
   }
 
+  /**
+   * The tournament's MVP leader, or null before any match has been finalised.
+   *
+   * Ranks on the true total, not the floored one `leaderboard()` displays: a
+   * board where every player is negative still has a leader, and flooring
+   * first would tie them all at 0.
+   */
+  private async mvpLeader(tournamentId: string): Promise<string | null> {
+    return (
+      await this.pool.query(
+        `SELECT player_id FROM player_tournament_stats
+         WHERE tournament_id = $1
+         ORDER BY mvp_points DESC, runs_scored DESC, wickets_taken DESC
+         LIMIT 1`,
+        [tournamentId],
+      )
+    ).rows[0]?.player_id ?? null;
+  }
+
+  /** A player can only take the award for a tournament they actually played in. */
+  private async assertTournamentPlayer(tournamentId: string, playerId: string) {
+    const ok = await this.pool.query(
+      `SELECT 1 FROM player_tournament_stats WHERE tournament_id = $1 AND player_id = $2`,
+      [tournamentId, playerId],
+    );
+    if (ok.rowCount === 0) {
+      throw new BadRequestException('That player has no recorded appearance in this tournament');
+    }
+  }
+
   async update(id: string, dto: any) {
     const before = (
-      await this.pool.query(`SELECT format_id FROM tournaments WHERE id = $1 AND deleted_at IS NULL`, [id])
+      await this.pool.query(
+        `SELECT format_id, status, player_of_tournament_id
+         FROM tournaments WHERE id = $1 AND deleted_at IS NULL`,
+        [id],
+      )
     ).rows[0];
     if (!before) throw new NotFoundException('Tournament not found');
+
+    // Player of the Tournament: an explicit pick always wins. Otherwise, the
+    // first time this tournament is marked completed the MVP leader is written
+    // in as the default — mirroring `stats.service` seeding player_of_match
+    // from the match MVP board at finalize. Seeded only on the transition, so
+    // re-saving a completed tournament never overwrites a hand-picked winner,
+    // and only when one is not already set.
+    let playerOfTournament: string | null = dto.player_of_tournament_id ?? null;
+    if (!playerOfTournament && dto.status === 'completed' && before.status !== 'completed'
+        && !before.player_of_tournament_id) {
+      playerOfTournament = await this.mvpLeader(id);
+    }
+    if (playerOfTournament) await this.assertTournamentPlayer(id, playerOfTournament);
 
     const res = await this.pool.query(
       `UPDATE tournaments SET
@@ -213,13 +262,14 @@ export class TournamentsService {
          start_date = coalesce($5,start_date), end_date = coalesce($6,end_date),
          banner_url = coalesce($7,banner_url), description = coalesce($8,description),
          rule_overrides = coalesce($9,rule_overrides), points_rules = coalesce($10,points_rules),
-         is_public = coalesce($11,is_public), format_id = coalesce($12,format_id)
+         is_public = coalesce($11,is_public), format_id = coalesce($12,format_id),
+         player_of_tournament_id = coalesce($13::uuid,player_of_tournament_id)
        WHERE id = $1 AND deleted_at IS NULL RETURNING *`,
       [id, dto.name ?? null, dto.season ?? null, dto.status ?? null, dto.start_date ?? null, dto.end_date ?? null,
        dto.banner_url ?? null, dto.description ?? null,
        dto.rule_overrides ? JSON.stringify(dto.rule_overrides) : null,
        dto.points_rules ? JSON.stringify(dto.points_rules) : null, dto.is_public ?? null,
-       dto.format_id ?? null],
+       dto.format_id ?? null, playerOfTournament],
     );
     if (res.rowCount === 0) throw new NotFoundException('Tournament not found');
 

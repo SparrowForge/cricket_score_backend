@@ -42,6 +42,11 @@ class UpdateTournamentDto {
   @IsOptional() @IsObject() rule_overrides?: object;
   @IsOptional() @IsObject() points_rules?: object;
   @IsOptional() @IsBoolean() is_public?: boolean;
+  /**
+   * Player of the Tournament. Omit it while marking a tournament completed and
+   * the MVP leader is written in as the default — see TournamentsService.update.
+   */
+  @IsOptional() @IsUUID() player_of_tournament_id?: string;
 }
 
 class CreateGroupDto {
