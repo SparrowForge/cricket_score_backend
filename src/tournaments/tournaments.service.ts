@@ -155,7 +155,7 @@ export class TournamentsService {
            AND ($1::uuid IS NULL OR t.organization_id = $1)
            AND ($2::text IS NULL OR t.status::text = $2)
            AND (t.is_public OR $1 IS NOT NULL)
-         ORDER BY t.start_date DESC NULLS LAST LIMIT 100`,
+         ORDER BY t.created_at DESC LIMIT 100`,
         [filter.org ?? null, filter.status ?? null],
       )
     ).rows;
