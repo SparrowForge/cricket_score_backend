@@ -350,19 +350,26 @@ export class CatalogService {
    * Win/loss record across matches that reached a conclusion. A match still in
    * progress counts towards nothing — `played` is decided matches, so
    * won + lost + tied + no_result always equals it.
+   *
+   * Counted from `match_players`, NOT `player_match_stats`: a per-match stats
+   * row is only written for a player who actually did something, so a batter
+   * who was named in the XI, never got in, never bowled and took no catch has
+   * no row at all and their appearance was invisible here. `is_playing_xi`
+   * excludes the named-but-unused bench.
    */
   async playerRecord(playerId: string) {
     return (
       await this.pool.query(
-        `SELECT count(*) FILTER (WHERE m.winner_team_id = pms.team_id)::int AS won,
+        `SELECT count(*) FILTER (WHERE m.winner_team_id = mp.team_id)::int AS won,
                 count(*) FILTER (WHERE m.result_type = 'win'
-                                   AND m.winner_team_id IS DISTINCT FROM pms.team_id)::int AS lost,
+                                   AND m.winner_team_id IS DISTINCT FROM mp.team_id)::int AS lost,
                 count(*) FILTER (WHERE m.result_type = 'tie')::int AS tied,
                 count(*) FILTER (WHERE m.result_type IN ('no_result','abandoned'))::int AS no_result,
                 count(*)::int AS played
-         FROM player_match_stats pms
-         JOIN matches m ON m.id = pms.match_id
-         WHERE pms.player_id = $1 AND m.status IN ('completed','abandoned','no_result')`,
+         FROM match_players mp
+         JOIN matches m ON m.id = mp.match_id
+         WHERE mp.player_id = $1 AND mp.is_playing_xi
+           AND m.status IN ('completed','abandoned','no_result')`,
         [playerId],
       )
     ).rows[0];
@@ -389,16 +396,27 @@ export class CatalogService {
     const lim = Math.min(limit, 50);
     // Most-recent team a player turned out for, shown next to their name.
     const lastTeam = `(
-      SELECT tm.short_name FROM player_match_stats pms2
-      JOIN matches m2 ON m2.id = pms2.match_id
-      JOIN teams tm ON tm.id = pms2.team_id
-      WHERE pms2.player_id = p.id
+      SELECT tm.short_name FROM match_players mp2
+      JOIN matches m2 ON m2.id = mp2.match_id
+      JOIN teams tm ON tm.id = mp2.team_id
+      WHERE mp2.player_id = p.id AND mp2.is_playing_xi
       ORDER BY m2.completed_at DESC NULLS LAST LIMIT 1
+    )`;
+    // Appearances = times named in the XI of a match that reached a result.
+    // `player_match_stats` cannot answer this: it only has a row for a player
+    // who batted, bowled or fielded a dismissal, so a quiet game vanishes.
+    // Same definition as playerRecord(), so all three boards and a player's own
+    // page report one number.
+    const appearances = `(
+      SELECT count(*)::int FROM match_players mp
+      JOIN matches m ON m.id = mp.match_id
+      WHERE mp.player_id = p.id AND mp.is_playing_xi
+        AND m.status IN ('completed','abandoned','no_result')
     )`;
     const runs = (
       await this.pool.query(
         `SELECT p.id AS player_id, p.full_name, p.photo_url, ${lastTeam} AS team_short_name,
-                sum(pcs.matches_played)::int AS matches_played,
+                ${appearances} AS matches_played,
                 sum(pcs.runs_scored)::int AS runs_scored,
                 sum(pcs.innings_batted)::int AS innings_batted,
                 sum(pcs.not_outs)::int AS not_outs,
@@ -426,7 +444,7 @@ export class CatalogService {
     const wickets = (
       await this.pool.query(
         `SELECT p.id AS player_id, p.full_name, p.photo_url, ${lastTeam} AS team_short_name,
-                sum(pcs.matches_played)::int AS matches_played,
+                ${appearances} AS matches_played,
                 sum(pcs.wickets_taken)::int AS wickets_taken,
                 sum(pcs.innings_bowled)::int AS innings_bowled,
                 sum(pcs.balls_bowled)::int AS balls_bowled,
@@ -453,29 +471,42 @@ export class CatalogService {
     ).rows;
     const mvp = (
       await this.pool.query(
+        // Driven from `match_players`, not `player_match_stats`: a stats row is
+        // only written for a player who batted, bowled or fielded a dismissal,
+        // so a quiet game left no trace and every one of these counters ran
+        // short. The points come from a LEFT JOIN — a scoreless appearance adds
+        // to matches/won/lost and nothing to the total, which is the point.
+        //
+        // The status filter carries real weight now: driving off the team sheet
+        // means a match that has only been picked, not played, would otherwise
+        // count as an appearance.
+        //
         // won/lost/win_pct and player_of_match_awards mirror playerRecord() and
         // the profile's award count, so the board and a player's own page can
         // never disagree. Only decided matches count towards the percentage —
         // ties and no-results sit in `played` but win nothing.
         `SELECT p.id AS player_id, p.full_name, p.photo_url, ${lastTeam} AS team_short_name,
                 count(*)::int AS matches_played,
-                count(*) FILTER (WHERE m.winner_team_id = pms.team_id)::int AS won,
+                count(*) FILTER (WHERE m.winner_team_id = mp.team_id)::int AS won,
                 count(*) FILTER (WHERE m.result_type = 'win'
-                                   AND m.winner_team_id IS DISTINCT FROM pms.team_id)::int AS lost,
+                                   AND m.winner_team_id IS DISTINCT FROM mp.team_id)::int AS lost,
                 count(*) FILTER (WHERE m.result_type = 'tie')::int AS tied,
                 count(*) FILTER (WHERE m.result_type IN ('no_result','abandoned'))::int AS no_result,
                 CASE WHEN count(*) FILTER (WHERE m.result_type = 'win') > 0
-                     THEN round(count(*) FILTER (WHERE m.winner_team_id = pms.team_id)::numeric * 100
+                     THEN round(count(*) FILTER (WHERE m.winner_team_id = mp.team_id)::numeric * 100
                                 / count(*) FILTER (WHERE m.result_type = 'win'), 1) END AS win_pct,
-                count(*) FILTER (WHERE m.player_of_match_id = pms.player_id)::int AS player_of_match_awards,
+                count(*) FILTER (WHERE m.player_of_match_id = mp.player_id)::int AS player_of_match_awards,
                 -- A negative career total is shown as 0, but the ranking uses the
                 -- real figure so two players sitting on 0 still order by how far
                 -- below they actually are.
-                round(greatest(sum(pms.mvp_points), 0), 2) AS mvp_points
-         FROM player_match_stats pms
-         JOIN players p ON p.id = pms.player_id
-         JOIN matches m ON m.id = pms.match_id
-         WHERE p.deleted_at IS NULL AND pms.mvp_points IS NOT NULL
+                round(greatest(coalesce(sum(pms.mvp_points), 0), 0), 2) AS mvp_points
+         FROM match_players mp
+         JOIN players p ON p.id = mp.player_id
+         JOIN matches m ON m.id = mp.match_id
+         LEFT JOIN player_match_stats pms
+                ON pms.match_id = mp.match_id AND pms.player_id = mp.player_id
+         WHERE p.deleted_at IS NULL AND mp.is_playing_xi
+           AND m.status IN ('completed','abandoned','no_result')
          GROUP BY p.id, p.full_name, p.photo_url
          HAVING sum(pms.mvp_points) > 0
          ORDER BY sum(pms.mvp_points) DESC LIMIT $1`,
