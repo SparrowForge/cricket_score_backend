@@ -499,7 +499,17 @@ export class CatalogService {
                 -- A negative career total is shown as 0, but the ranking uses the
                 -- real figure so two players sitting on 0 still order by how far
                 -- below they actually are.
-                round(greatest(coalesce(sum(pms.mvp_points), 0), 0), 2) AS mvp_points
+                round(greatest(coalesce(sum(pms.mvp_points), 0), 0), 2) AS mvp_points,
+                -- Player-of-the-tournament is a stored pick on the tournament row,
+                -- so it is counted from there rather than re-derived from the
+                -- points. Career-wide here; the per-tournament board in
+                -- StatsService.leaderboard() counts the same column scoped to
+                -- one tournament.
+                (SELECT count(*) FROM tournaments tt
+                  WHERE tt.player_of_tournament_id = p.id)::int AS player_of_tournament_awards,
+                -- Points per appearance, floored the same way the total above
+                -- is so the pair cannot disagree in sign.
+                round(greatest(coalesce(sum(pms.mvp_points), 0), 0) / count(*), 2) AS avg_mvp_points
          FROM match_players mp
          JOIN players p ON p.id = mp.player_id
          JOIN matches m ON m.id = mp.match_id

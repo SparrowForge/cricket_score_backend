@@ -797,7 +797,20 @@ export class StatsService {
                 coalesce(r.tied, 0) AS tied,
                 coalesce(r.no_result, 0) AS no_result,
                 r.win_pct,
-                coalesce(r.player_of_match_awards, 0) AS player_of_match_awards
+                coalesce(r.player_of_match_awards, 0) AS player_of_match_awards,
+                -- Player of the tournament is a stored pick on the tournament row,
+                -- not a derivation of mvp_points, so it is read from there. On
+                -- a single-tournament board this is 0 or 1; the career board in
+                -- CatalogService.leaders() counts the same column across all of
+                -- them.
+                (SELECT count(*) FROM tournaments tt
+                  WHERE tt.id = v.tournament_id
+                    AND tt.player_of_tournament_id = v.player_id)::int AS player_of_tournament_awards,
+                -- Points per appearance. Floored the same way mvp_points is
+                -- below, so a player whose total displays as 0 cannot show a
+                -- negative average beside it.
+                CASE WHEN v.matches_played > 0
+                     THEN round(greatest(v.mvp_points, 0) / v.matches_played, 2) END AS avg_mvp_points
          FROM v_player_tournament_leaderboard v
          LEFT JOIN record r ON r.player_id = v.player_id
          WHERE v.tournament_id = $1
