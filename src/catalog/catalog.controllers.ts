@@ -345,6 +345,14 @@ export class PlayersController {
     return this.catalog.playerMatches(playerId);
   }
 
+  /** Head-to-head breakdown for the profile's Matchups tab: every batter this
+   *  player has bowled to, and every bowler they have faced. */
+  @Public()
+  @Get('players/:playerId/matchups')
+  playerMatchups(@Param('playerId', ParseUUIDPipe) playerId: string) {
+    return this.catalog.playerMatchups(playerId);
+  }
+
   @Patch('players/:playerId')
   @UseGuards(JwtAuthGuard)
   async update(

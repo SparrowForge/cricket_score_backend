@@ -375,6 +375,121 @@ export class CatalogService {
     ).rows[0];
   }
 
+
+  /**
+   * Head-to-head matchups, both directions, read straight off the ball stream.
+   *
+   *   as_bowler — one row per batter this player has bowled to
+   *   as_batter — one row per bowler this player has faced
+   *
+   * Both halves are the SAME aggregate over the same (batter, bowler) pairs
+   * with the key and the opponent column swapped, so a row on one player's
+   * "as bowler" table is the exact mirror of the row on the other player's
+   * "as batter" table. Keep it that way — two separate aggregates would drift.
+   *
+   * Computed live rather than rolled up at finalize (unlike
+   * `player_match_stats`), so a match still in progress is included. The cost
+   * is bounded by the innings the player actually appeared in, not by the
+   * whole ball table.
+   */
+  async playerMatchups(playerId: string) {
+    const [asBowler, asBatter] = await Promise.all([
+      this.pool.query(this.matchupSql('bowler_id', 'batter_id'), [playerId]),
+      this.pool.query(this.matchupSql('batter_id', 'bowler_id'), [playerId]),
+    ]);
+    return { as_bowler: asBowler.rows, as_batter: asBatter.rows };
+  }
+
+  /**
+   * `keyCol` is the side the profile's player sits on, `oppCol` the side that
+   * becomes the row. Neither is user input — both are literals chosen by
+   * `playerMatchups`, so interpolating them into the SQL is safe.
+   *
+   * Definitions are taken from `stats.service.ts buildPlayerMatchStats` on
+   * purpose, so a matchup row adds up to the scorecard:
+   *   balls — deliveries faced, i.e. everything except a wide
+   *   runs  — runs off the bat only (extras belong to no batter)
+   *   dots  — legal deliveries that produced nothing at all, byes included
+   */
+  private matchupSql(keyCol: 'bowler_id' | 'batter_id', oppCol: 'batter_id' | 'bowler_id') {
+    return `
+      WITH pi AS (
+        -- Three separate probes, not one OR: each hits its own partial index.
+        SELECT innings_id FROM balls WHERE striker_id = $1 AND NOT is_superseded
+        UNION
+        SELECT innings_id FROM balls WHERE bowler_id = $1 AND NOT is_superseded
+        UNION
+        SELECT innings_id FROM balls WHERE dismissed_player_id = $1 AND NOT is_superseded
+      ),
+      -- Every surviving ball of those innings — not just the player's own.
+      -- The opponent's full innings total is needed below to tell a duck from
+      -- a low score, and that cannot be read from the player's balls alone.
+      ab AS (
+        SELECT b.*, i.match_id
+        FROM balls b
+        JOIN innings i ON i.id = b.innings_id
+        WHERE b.innings_id IN (SELECT innings_id FROM pi) AND NOT b.is_superseded
+      ),
+      inn_runs AS (
+        SELECT innings_id, striker_id AS batter_id, sum(runs_batter)::int AS runs
+        FROM ab GROUP BY 1, 2
+      ),
+      -- One row per (batter, bowler) event. The second branch exists because a
+      -- run out at the NON-striker's end still belongs to the pair even though
+      -- the batter never faced that delivery — without it a batter run out
+      -- backing up goes missing from the bowler's dismissal columns, and a
+      -- batter who was run out without facing a ball has no row at all.
+      pe AS (
+        SELECT striker_id AS batter_id, bowler_id, innings_id, match_id,
+               true AS faced, runs_batter, extra_type, is_legal, runs_extras,
+               is_boundary_four, is_boundary_six,
+               CASE WHEN is_wicket AND dismissed_player_id = striker_id
+                    THEN wicket_type END AS wkt
+        FROM ab
+        UNION ALL
+        SELECT dismissed_player_id, bowler_id, innings_id, match_id,
+               false, 0::smallint, NULL::extra_type, false, 0::smallint,
+               false, false, wicket_type
+        FROM ab
+        WHERE is_wicket AND dismissed_player_id IS NOT NULL
+          AND dismissed_player_id <> striker_id
+      )
+      SELECT op.id AS player_id, op.full_name, op.display_name, op.photo_url,
+             count(DISTINCT pe.match_id)::int AS matches,
+             count(DISTINCT pe.innings_id)::int AS innings,
+             count(*) FILTER (WHERE pe.faced AND pe.extra_type IS DISTINCT FROM 'wide')::int AS balls,
+             sum(pe.runs_batter)::int AS runs,
+             count(*) FILTER (WHERE pe.faced AND pe.is_legal
+                                AND pe.runs_batter = 0 AND pe.runs_extras = 0)::int AS dots,
+             count(*) FILTER (WHERE pe.faced AND pe.is_boundary_four)::int AS fours,
+             count(*) FILTER (WHERE pe.faced AND pe.is_boundary_six)::int AS sixes,
+             count(*) FILTER (WHERE pe.wkt = 'bowled')::int AS bowled,
+             count(*) FILTER (WHERE pe.wkt IN ('caught','caught_behind','caught_and_bowled'))::int AS caught,
+             count(*) FILTER (WHERE pe.wkt = 'lbw')::int AS lbw,
+             count(*) FILTER (WHERE pe.wkt = 'stumped')::int AS stumped,
+             count(*) FILTER (WHERE pe.wkt = 'run_out')::int AS run_out,
+             count(*) FILTER (WHERE pe.wkt = 'declared_out')::int AS declared_out,
+             -- Everything else that is still an out: hit_wicket, retired_out,
+             -- obstructing_field, timed_out, handled_ball, hit_ball_twice. Present so
+             -- the named columns plus this one add up to total_out exactly — without
+             -- it the table shows a total that reconciles with nothing.
+             count(*) FILTER (WHERE pe.wkt IS NOT NULL AND pe.wkt NOT IN
+               ('retired_hurt','bowled','caught','caught_behind','caught_and_bowled',
+                'lbw','stumped','run_out','declared_out'))::int AS other_out,
+             -- retired_hurt is the one dismissal that is not an out; every
+             -- other value counts, so total_out is >= the named columns above.
+             count(*) FILTER (WHERE pe.wkt IS NOT NULL AND pe.wkt <> 'retired_hurt')::int AS total_out,
+             -- A duck is 0 in the INNINGS, not 0 against this bowler.
+             count(*) FILTER (WHERE pe.wkt IS NOT NULL AND pe.wkt <> 'retired_hurt'
+                                AND coalesce(ir.runs, 0) = 0)::int AS ducks
+      FROM pe
+      LEFT JOIN inn_runs ir ON ir.innings_id = pe.innings_id AND ir.batter_id = pe.batter_id
+      JOIN players op ON op.id = pe.${oppCol}
+      WHERE pe.${keyCol} = $1
+      GROUP BY op.id, op.full_name, op.display_name, op.photo_url
+      ORDER BY balls DESC, runs DESC, op.full_name`;
+  }
+
   /** Global, unauthenticated search across every organization's roster (public profile browsing). */
   async publicSearch(search?: string, limit = 20) {
     return (
