@@ -17,6 +17,19 @@ import { StatsService } from './stats.service';
 const APPLIED_EVENT_ID_HISTORY = 40;
 
 /**
+ * Result types that end a match with no winner and no further play. Both leave
+ * the sides on equal footing, so the points table scores them off
+ * `points_rules.no_result`; the split is descriptive — 'abandoned' for a match
+ * called off (weather, ground, walkover), 'no_result' for one that was played
+ * but could not reach a decision.
+ */
+const NO_PLAY_RESULTS = ['abandoned', 'no_result'];
+const NO_PLAY_SUMMARY: Record<string, string> = {
+  abandoned: 'Match abandoned',
+  no_result: 'No result',
+};
+
+/**
  * A match-ending outcome the rules engine can never produce, because it isn't
  * reachable from a delivery: the side batting (or due to bat) in the final
  * innings gave that innings up. Kept out of `SideEffect` so the engine stays a
@@ -1291,12 +1304,37 @@ export class ScoringService {
   async finalize(matchId: string, dto: { player_of_match_id?: string; result_type?: string; result_summary?: string }) {
     await this.withMatch(matchId, async (client, match) => {
       if (dto.result_type) {
+        // 'abandoned'/'no_result' can be forced at any point — before the toss
+        // or mid-over — so they carry their own summary and stop play where it
+        // stands, unlike the other result types which only ever restate the
+        // outcome of a match the engine already completed.
+        const stopsPlay = NO_PLAY_RESULTS.includes(dto.result_type);
+        const summary = dto.result_summary ?? (stopsPlay ? NO_PLAY_SUMMARY[dto.result_type] : null);
         await client.query(
           `UPDATE matches SET status = CASE WHEN $2 IN ('abandoned','no_result') THEN $2::match_status ELSE 'completed'::match_status END,
                   result_type = $2, result_summary = coalesce($3, result_summary), completed_at = coalesce(completed_at, now())
            WHERE id = $1`,
-          [matchId, dto.result_type, dto.result_summary ?? null],
+          [matchId, dto.result_type, summary],
         );
+        if (stopsPlay) {
+          // An innings left open would keep reading as playable to the
+          // scorecard and to every rollup that filters on innings status.
+          await client.query(
+            `UPDATE innings SET status = 'abandoned', ended_at = coalesce(ended_at, now())
+             WHERE match_id = $1 AND status IN ('not_started', 'in_progress')`,
+            [matchId],
+          );
+          // live_state is spread over the match row's own columns on load, so
+          // its result_summary shadows the column we just wrote. Write both, or
+          // the published snapshot keeps showing the pre-abandonment summary.
+          await client.query(
+            `UPDATE matches
+                SET live_state = coalesce(live_state, '{}'::jsonb) || jsonb_build_object('result_summary', $2::text),
+                    live_state_seq = live_state_seq + 1
+              WHERE id = $1`,
+            [matchId, summary],
+          );
+        }
       }
       if (dto.player_of_match_id) {
         await client.query(`UPDATE matches SET player_of_match_id = $2 WHERE id = $1`, [matchId, dto.player_of_match_id]);
