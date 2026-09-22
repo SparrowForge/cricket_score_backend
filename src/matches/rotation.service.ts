@@ -452,7 +452,7 @@ export class RotationService {
         batters: { [striker]: await this.card(client, striker) },
         bowlers: { [dto.bowler_id]: await this.bowlerCard(client, dto.bowler_id) },
         this_over: [],
-        recent_ball_labels: [],
+        recent_overs: [],
         over_bowler_runs: 0,
         pending_new_batter: null,
         current_bowler: dto.bowler_id,

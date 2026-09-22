@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import Redis from 'ioredis';
 import { Pool } from 'pg';
 import { PG_POOL } from '../database/database.module';
-import { ballLabelFromRow, RECENT_BALL_WINDOW } from './ball-label';
+import { RECENT_OVERS, recentOversFromRows } from './ball-label';
 import { REDIS } from '../redis/redis.module';
 
 const COMPLETED_TTL_SECONDS = 6 * 3600; // inactive-match eviction: 6h after completion
@@ -45,12 +45,12 @@ export class LiveStateService {
       const cached = await this.redis.get(this.stateKey(matchId));
       if (cached) {
         const snapshot = { ...JSON.parse(cached), source: 'redis' };
-        // A snapshot cached before recent_ball_labels existed is missing it too.
-        if (snapshot.innings_id && !Array.isArray(snapshot.recent_ball_labels)) {
+        // A snapshot cached before recent_overs existed is missing it too.
+        if (snapshot.innings_id && !Array.isArray(snapshot.recent_overs)) {
           const rules = (await this.pool.query(
             `SELECT rules_snapshot FROM matches WHERE id = $1`, [matchId],
           )).rows[0]?.rules_snapshot ?? {};
-          await this.fillRecentBallLabels(snapshot, rules);
+          await this.fillRecentOvers(snapshot, rules);
         }
         return snapshot;
       }
@@ -150,32 +150,38 @@ export class LiveStateService {
       result_summary: row.result_summary,
       ...(row.live_state ?? {}),
     };
-    await this.fillRecentBallLabels(snapshot, row.rules_snapshot ?? {});
+    await this.fillRecentOvers(snapshot, row.rules_snapshot ?? {});
     return snapshot;
   }
 
   /**
-   * Matches scored before recent_ball_labels existed have no rolling window in
-   * their stored live_state, so the scoreboard would fall back to the current
-   * over alone. Derive it from the ball stream on read instead of backfilling
-   * every match row; the result is cached in Redis with the rest of the
-   * snapshot, so it costs one query per cold load of such a match. Scoring
-   * writes the field itself, so live matches never take this path.
+   * Matches scored before recent_overs existed have no rolling window in their
+   * stored live_state, so the scoreboard would fall back to the current over
+   * alone. Derive it from the ball stream on read instead of backfilling every
+   * match row; the result is cached in Redis with the rest of the snapshot, so
+   * it costs one query per cold load of such a match. Scoring writes the field
+   * itself, so live matches never take this path.
    */
-  private async fillRecentBallLabels(snapshot: any, rules: Record<string, any>): Promise<void> {
-    if (!snapshot.innings_id || Array.isArray(snapshot.recent_ball_labels)) return;
+  private async fillRecentOvers(snapshot: any, rules: Record<string, any>): Promise<void> {
+    if (!snapshot.innings_id || Array.isArray(snapshot.recent_overs)) return;
     try {
+      // Whole overs, so the window is cut by over number rather than by a ball
+      // count — an over holding wides is longer than balls_per_over.
       const balls = await this.pool.query(
-        `SELECT runs_batter, runs_extras, extra_type, secondary_extra_type,
+        `SELECT over_number, runs_batter, runs_extras, extra_type, secondary_extra_type,
                 is_wicket, is_boundary_four, is_boundary_six
-           FROM balls WHERE innings_id = $1 AND NOT is_superseded
-          ORDER BY seq DESC LIMIT $2`,
-        [snapshot.innings_id, RECENT_BALL_WINDOW],
+           FROM balls
+          WHERE innings_id = $1 AND NOT is_superseded
+            AND over_number > coalesce(
+                  (SELECT max(over_number) FROM balls
+                    WHERE innings_id = $1 AND NOT is_superseded), 0) - $2
+          ORDER BY seq`,
+        [snapshot.innings_id, RECENT_OVERS],
       );
-      snapshot.recent_ball_labels = balls.rows.reverse().map((b) => ballLabelFromRow(b, rules));
+      snapshot.recent_overs = recentOversFromRows(balls.rows, rules);
     } catch (err) {
       // Cosmetic — the client falls back to this_over.
-      this.logger.warn(`recent_ball_labels backfill failed: ${(err as Error).message}`);
+      this.logger.warn(`recent_overs backfill failed: ${(err as Error).message}`);
     }
   }
 

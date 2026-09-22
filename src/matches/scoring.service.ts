@@ -7,7 +7,7 @@ import { SaasService } from '../saas/saas.service';
 import { deepMerge } from './matches.service';
 import { LiveStateService } from './live-state.service';
 import { RotationService } from './rotation.service';
-import { ballLabel, ballLabelFromRow, RECENT_BALL_WINDOW } from './ball-label';
+import { ballLabel, pushRecentOver, RecentOver, recentOversFromRows } from './ball-label';
 import { applyBall, BallEvent, chaseCloseEffect, FormatRules, LiveInningsState, SideEffect } from './rules-engine';
 import { StatsService } from './stats.service';
 
@@ -126,7 +126,7 @@ export class ScoringService {
         innings_id: innings.id,
         innings_seq: 1,
         engine: null,
-        batters: {}, bowlers: {}, this_over: [], recent_ball_labels: [], over_bowler_runs: 0,
+        batters: {}, bowlers: {}, this_over: [], recent_overs: [], over_bowler_runs: 0,
         pending_new_batter: null,
         summary: await this.summaryShell(client, battingFirst, null),
       };
@@ -537,8 +537,9 @@ export class ScoringService {
       }
       const chip = this.ballLabel(ev, isFour, isSix);
       ls.this_over.push(chip);
-      // Rolling window — deliberately NOT cleared by the over_complete branch below.
-      ls.recent_ball_labels = [...(ls.recent_ball_labels ?? []), chip].slice(-RECENT_BALL_WINDOW);
+      // Rolling per-over window — deliberately NOT cleared by the
+      // over_complete branch below; it rolls when the over number changes.
+      ls.recent_overs = pushRecentOver(ls.recent_overs, overNumber, chip, ev.runsBatter + totalExtras);
       ls.current_bowler = bowlerId;
 
       // ---- Auto ball-by-ball commentary ----
@@ -1384,7 +1385,7 @@ export class ScoringService {
       if (lead >= deficit) {
         ls.follow_on_available = { lead, deficit, decision_team_id: done[0].batting_team_id };
         ls.innings_id = null; ls.engine = null;
-        ls.batters = {}; ls.bowlers = {}; ls.this_over = []; ls.recent_ball_labels = [];
+        ls.batters = {}; ls.bowlers = {}; ls.this_over = []; ls.recent_overs = [];
         ls.pending_new_batter = null; ls.current_bowler = null;
         await client.query(`UPDATE matches SET status = 'innings_break' WHERE id = $1`, [match.id]);
         match.status = 'innings_break';
@@ -1446,7 +1447,7 @@ export class ScoringService {
     ls.innings_id = next.id;
     ls.innings_seq = nextSeq;
     ls.engine = null;
-    ls.batters = {}; ls.bowlers = {}; ls.this_over = []; ls.recent_ball_labels = []; ls.over_bowler_runs = 0;
+    ls.batters = {}; ls.bowlers = {}; ls.this_over = []; ls.recent_overs = []; ls.over_bowler_runs = 0;
     ls.pending_new_batter = null; ls.current_bowler = null;
     await client.query(`UPDATE matches SET status = 'innings_break' WHERE id = $1`, [match.id]);
     match.status = 'innings_break';
@@ -1565,7 +1566,7 @@ export class ScoringService {
     const batters: Record<string, any> = {};
     const bowlers: Record<string, any> = {};
     let thisOver: string[] = [];
-    let recentLabels: string[] = [];
+    let recentOvers: RecentOver[] = [];
     let currentBowler: string | null = null;
 
     await client.query(`DELETE FROM over_summaries WHERE innings_id = $1`, [inningsId]);
@@ -1735,13 +1736,10 @@ export class ScoringService {
         }
       }
       // this_over = balls of the current (possibly partial) over;
-      // recent_ball_labels = the last RECENT_BALL_WINDOW of the innings, over
-      // boundaries included.
+      // recent_overs = the last RECENT_OVERS of the innings, grouped.
       const currentOver = Math.floor(engine.legalBalls / rules.balls_per_over);
-      thisOver = balls
-        .filter((b) => b.over_number === currentOver)
-        .map((b) => ballLabelFromRow(b, rules));
-      recentLabels = balls.slice(-RECENT_BALL_WINDOW).map((b) => ballLabelFromRow(b, rules));
+      recentOvers = recentOversFromRows(balls, rules);
+      thisOver = [...(recentOvers.find((o) => o.over === currentOver)?.balls ?? [])];
 
       // Maidens: completed overs (everything before the current, possibly
       // partial, over) where the bowler's charged runs (excluding
@@ -1897,7 +1895,7 @@ export class ScoringService {
     ls.batters = batters;
     ls.bowlers = bowlers;
     ls.this_over = thisOver;
-    ls.recent_ball_labels = recentLabels;
+    ls.recent_overs = recentOvers;
     ls.over_bowler_runs = 0;
     ls.pending_new_batter = null;
     ls.current_bowler = currentBowler;
