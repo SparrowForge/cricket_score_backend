@@ -7,6 +7,7 @@ import { SaasService } from '../saas/saas.service';
 import { deepMerge } from './matches.service';
 import { LiveStateService } from './live-state.service';
 import { RotationService } from './rotation.service';
+import { ballLabel, ballLabelFromRow, RECENT_BALL_WINDOW } from './ball-label';
 import { applyBall, BallEvent, chaseCloseEffect, FormatRules, LiveInningsState, SideEffect } from './rules-engine';
 import { StatsService } from './stats.service';
 
@@ -125,7 +126,7 @@ export class ScoringService {
         innings_id: innings.id,
         innings_seq: 1,
         engine: null,
-        batters: {}, bowlers: {}, this_over: [], over_bowler_runs: 0,
+        batters: {}, bowlers: {}, this_over: [], recent_ball_labels: [], over_bowler_runs: 0,
         pending_new_batter: null,
         summary: await this.summaryShell(client, battingFirst, null),
       };
@@ -534,7 +535,10 @@ export class ScoringService {
       if (ev.wicket && !['run_out', 'retired_hurt', 'retired_out', 'obstructing_field', 'timed_out'].includes(ev.wicket.type)) {
         bowl.wickets += 1;
       }
-      ls.this_over.push(this.ballLabel(ev, isFour, isSix));
+      const chip = this.ballLabel(ev, isFour, isSix);
+      ls.this_over.push(chip);
+      // Rolling window — deliberately NOT cleared by the over_complete branch below.
+      ls.recent_ball_labels = [...(ls.recent_ball_labels ?? []), chip].slice(-RECENT_BALL_WINDOW);
       ls.current_bowler = bowlerId;
 
       // ---- Auto ball-by-ball commentary ----
@@ -1380,7 +1384,7 @@ export class ScoringService {
       if (lead >= deficit) {
         ls.follow_on_available = { lead, deficit, decision_team_id: done[0].batting_team_id };
         ls.innings_id = null; ls.engine = null;
-        ls.batters = {}; ls.bowlers = {}; ls.this_over = [];
+        ls.batters = {}; ls.bowlers = {}; ls.this_over = []; ls.recent_ball_labels = [];
         ls.pending_new_batter = null; ls.current_bowler = null;
         await client.query(`UPDATE matches SET status = 'innings_break' WHERE id = $1`, [match.id]);
         match.status = 'innings_break';
@@ -1442,7 +1446,7 @@ export class ScoringService {
     ls.innings_id = next.id;
     ls.innings_seq = nextSeq;
     ls.engine = null;
-    ls.batters = {}; ls.bowlers = {}; ls.this_over = []; ls.over_bowler_runs = 0;
+    ls.batters = {}; ls.bowlers = {}; ls.this_over = []; ls.recent_ball_labels = []; ls.over_bowler_runs = 0;
     ls.pending_new_batter = null; ls.current_bowler = null;
     await client.query(`UPDATE matches SET status = 'innings_break' WHERE id = $1`, [match.id]);
     match.status = 'innings_break';
@@ -1561,6 +1565,7 @@ export class ScoringService {
     const batters: Record<string, any> = {};
     const bowlers: Record<string, any> = {};
     let thisOver: string[] = [];
+    let recentLabels: string[] = [];
     let currentBowler: string | null = null;
 
     await client.query(`DELETE FROM over_summaries WHERE innings_id = $1`, [inningsId]);
@@ -1729,24 +1734,14 @@ export class ScoringService {
           );
         }
       }
-      // this_over = balls of the current (possibly partial) over.
-      // Stored runs_extras includes the automatic wide/no-ball penalty, but
-      // ballLabel expects only the runs beyond it (a plain wide must render
-      // 'wd', not '2wd'), so strip the penalty back out before labelling.
+      // this_over = balls of the current (possibly partial) over;
+      // recent_ball_labels = the last RECENT_BALL_WINDOW of the innings, over
+      // boundaries included.
       const currentOver = Math.floor(engine.legalBalls / rules.balls_per_over);
       thisOver = balls
         .filter((b) => b.over_number === currentOver)
-        .map((b) => {
-          const autoPenalty = b.extra_type === 'wide' ? rules.wide?.runs ?? 1
-            : b.extra_type === 'no_ball' ? rules.no_ball?.runs ?? 1 : 0;
-          return this.ballLabel(
-            {
-              runsBatter: b.runs_batter, extraType: b.extra_type, runsExtras: b.runs_extras - autoPenalty,
-              secondaryExtraType: b.secondary_extra_type ?? null, wicket: b.is_wicket ? ({} as any) : null,
-            } as any,
-            b.is_boundary_four, b.is_boundary_six,
-          );
-        });
+        .map((b) => ballLabelFromRow(b, rules));
+      recentLabels = balls.slice(-RECENT_BALL_WINDOW).map((b) => ballLabelFromRow(b, rules));
 
       // Maidens: completed overs (everything before the current, possibly
       // partial, over) where the bowler's charged runs (excluding
@@ -1902,6 +1897,7 @@ export class ScoringService {
     ls.batters = batters;
     ls.bowlers = bowlers;
     ls.this_over = thisOver;
+    ls.recent_ball_labels = recentLabels;
     ls.over_bowler_runs = 0;
     ls.pending_new_batter = null;
     ls.current_bowler = currentBowler;
@@ -2118,15 +2114,7 @@ export class ScoringService {
   }
 
   private ballLabel(ev: BallEvent, four: boolean, six: boolean): string {
-    if (ev.wicket) return ev.runsBatter ? `${ev.runsBatter}W` : 'W';
-    if (ev.extraType === 'wide') return `${ev.runsExtras ? ev.runsExtras + 1 : ''}wd`;
-    if (ev.extraType === 'no_ball' && ev.secondaryExtraType) return `nb+${ev.runsExtras}${ev.secondaryExtraType === 'bye' ? 'b' : 'lb'}`;
-    if (ev.extraType === 'no_ball') return `${ev.runsBatter ? ev.runsBatter : ''}nb`;
-    if (ev.extraType === 'bye') return `${ev.runsExtras}b`;
-    if (ev.extraType === 'leg_bye') return `${ev.runsExtras}lb`;
-    if (six) return '6';
-    if (four) return '4';
-    return String(ev.runsBatter);
+    return ballLabel(ev, four, six);
   }
 
   /**

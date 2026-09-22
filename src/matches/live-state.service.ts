@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import Redis from 'ioredis';
 import { Pool } from 'pg';
 import { PG_POOL } from '../database/database.module';
+import { ballLabelFromRow, RECENT_BALL_WINDOW } from './ball-label';
 import { REDIS } from '../redis/redis.module';
 
 const COMPLETED_TTL_SECONDS = 6 * 3600; // inactive-match eviction: 6h after completion
@@ -42,7 +43,17 @@ export class LiveStateService {
   async getState(matchId: string): Promise<any> {
     try {
       const cached = await this.redis.get(this.stateKey(matchId));
-      if (cached) return { ...JSON.parse(cached), source: 'redis' };
+      if (cached) {
+        const snapshot = { ...JSON.parse(cached), source: 'redis' };
+        // A snapshot cached before recent_ball_labels existed is missing it too.
+        if (snapshot.innings_id && !Array.isArray(snapshot.recent_ball_labels)) {
+          const rules = (await this.pool.query(
+            `SELECT rules_snapshot FROM matches WHERE id = $1`, [matchId],
+          )).rows[0]?.rules_snapshot ?? {};
+          await this.fillRecentBallLabels(snapshot, rules);
+        }
+        return snapshot;
+      }
     } catch (err) {
       this.logger.warn(`Redis read failed, serving from Postgres: ${(err as Error).message}`);
     }
@@ -127,17 +138,45 @@ export class LiveStateService {
   // ---------- internals ----------
   private async loadFromDb(matchId: string): Promise<any> {
     const res = await this.pool.query(
-      `SELECT status, live_state, live_state_seq, result_summary FROM matches WHERE id = $1`,
+      `SELECT status, live_state, live_state_seq, result_summary, rules_snapshot
+         FROM matches WHERE id = $1`,
       [matchId],
     );
     if (res.rowCount === 0) throw new NotFoundException('Match not found');
     const row = res.rows[0];
-    return {
+    const snapshot = {
       status: row.status,
       seq: Number(row.live_state_seq),
       result_summary: row.result_summary,
       ...(row.live_state ?? {}),
     };
+    await this.fillRecentBallLabels(snapshot, row.rules_snapshot ?? {});
+    return snapshot;
+  }
+
+  /**
+   * Matches scored before recent_ball_labels existed have no rolling window in
+   * their stored live_state, so the scoreboard would fall back to the current
+   * over alone. Derive it from the ball stream on read instead of backfilling
+   * every match row; the result is cached in Redis with the rest of the
+   * snapshot, so it costs one query per cold load of such a match. Scoring
+   * writes the field itself, so live matches never take this path.
+   */
+  private async fillRecentBallLabels(snapshot: any, rules: Record<string, any>): Promise<void> {
+    if (!snapshot.innings_id || Array.isArray(snapshot.recent_ball_labels)) return;
+    try {
+      const balls = await this.pool.query(
+        `SELECT runs_batter, runs_extras, extra_type, secondary_extra_type,
+                is_wicket, is_boundary_four, is_boundary_six
+           FROM balls WHERE innings_id = $1 AND NOT is_superseded
+          ORDER BY seq DESC LIMIT $2`,
+        [snapshot.innings_id, RECENT_BALL_WINDOW],
+      );
+      snapshot.recent_ball_labels = balls.rows.reverse().map((b) => ballLabelFromRow(b, rules));
+    } catch (err) {
+      // Cosmetic — the client falls back to this_over.
+      this.logger.warn(`recent_ball_labels backfill failed: ${(err as Error).message}`);
+    }
   }
 
   private async warm(matchId: string, snapshot: any): Promise<void> {
