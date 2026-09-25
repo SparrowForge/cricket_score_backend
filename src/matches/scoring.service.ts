@@ -368,13 +368,12 @@ export class ScoringService {
       }
       if (!ls?.innings_id) throw new BadRequestException('No innings awaiting openers');
       const rules: FormatRules = match.rules_snapshot;
-      await this.assertInXI(client, matchId, [dto.striker_id, dto.non_striker_id], 'bat');
-      await this.assertInXI(client, matchId, [dto.bowler_id], 'bowl');
-      if (dto.striker_id === dto.non_striker_id) throw new BadRequestException('Openers must be two different players');
-
       const innings = (
         await client.query(`SELECT * FROM innings WHERE id = $1`, [ls.innings_id])
       ).rows[0];
+      await this.assertInXI(client, matchId, [dto.striker_id, dto.non_striker_id], 'bat', this.sideFor(rules, innings, 'bat'));
+      await this.assertInXI(client, matchId, [dto.bowler_id], 'bowl', this.sideFor(rules, innings, 'bowl'));
+      if (dto.striker_id === dto.non_striker_id) throw new BadRequestException('Openers must be two different players');
 
       const engine: LiveInningsState = {
         seq: Number(match.live_state_seq),
@@ -433,6 +432,14 @@ export class ScoringService {
       }
 
       const bowlerId = dto.bowler_id ?? ls.current_bowler;
+      // current_bowler was checked when it was set; a bowler change arrives
+      // only as a differing bowler_id on the ball, so that is what to check.
+      if (bowlerId !== ls.current_bowler) {
+        const innings = (await client.query(
+          `SELECT batting_team_id, bowling_team_id FROM innings WHERE id = $1`, [ls.innings_id],
+        )).rows[0];
+        await this.assertInXI(client, matchId, [bowlerId], 'bowl', this.sideFor(rules, innings, 'bowl'));
+      }
       const ev: BallEvent = {
         strikerId: ls.engine.strikerId,
         nonStrikerId: ls.engine.nonStrikerId,
@@ -723,10 +730,13 @@ export class ScoringService {
     const out = await this.withMatch(matchId, async (client, match) => {
       const ls = match.live_state;
       if (!ls?.pending_new_batter) throw new BadRequestException('No new batter required');
-      await this.assertInXI(client, matchId, [dto.player_id], 'bat');
+      const rules: FormatRules = match.rules_snapshot;
+      const innings = (await client.query(
+        `SELECT batting_team_id, bowling_team_id FROM innings WHERE id = $1`, [ls.innings_id],
+      )).rows[0];
+      await this.assertInXI(client, matchId, [dto.player_id], 'bat', this.sideFor(rules, innings, 'bat'));
       if (ls.batters[dto.player_id]?.out) throw new BadRequestException('Player is already out');
 
-      const rules: FormatRules = match.rules_snapshot;
       const solo = rules?.solo_batting?.enabled === true;
       const dismissed = ls.pending_new_batter;
 
@@ -1939,20 +1949,41 @@ export class ScoringService {
     }
   }
 
-  private async assertInXI(client: PoolClient, matchId: string, playerIds: string[], need: 'bat' | 'bowl') {
+  /**
+   * `teamId` pins the check to one side. Without it, any XI member passes —
+   * which once let the scorer start an innings with a batting-side player as
+   * the opening bowler, bowling to himself. The resulting balls put one player
+   * under both teams in player_match_stats and made finalize 500.
+   */
+  private async assertInXI(client: PoolClient, matchId: string, playerIds: string[], need: 'bat' | 'bowl', teamId?: string | null) {
     for (const id of playerIds) {
       const r = await client.query(
         `SELECT 1 FROM match_players
          WHERE match_id = $1 AND player_id = $2
+           AND ($3::uuid IS NULL OR team_id = $3::uuid)
            AND (is_playing_xi OR (is_twelfth AND ${need === 'bat' ? 'can_bat' : 'can_bowl'}))`,
-        [matchId, id],
+        [matchId, id, teamId ?? null],
       );
       if (r.rowCount === 0) {
         // Allow when no squad was registered (casual scoring)
         const anySquad = await client.query(`SELECT 1 FROM match_players WHERE match_id = $1 LIMIT 1`, [matchId]);
-        if (anySquad.rowCount! > 0) throw new BadRequestException(`Player ${id} is not eligible to ${need} in this match`);
+        if (anySquad.rowCount! > 0) {
+          throw new BadRequestException(teamId
+            ? `Player ${id} is not in the ${need === 'bat' ? 'batting' : 'bowling'} side's XI`
+            : `Player ${id} is not eligible to ${need} in this match`);
+        }
       }
     }
+  }
+
+  /**
+   * The team a player must belong to for `need` in this innings, or null when
+   * sides don't apply: rotation (gully) mode registers everyone under team A
+   * and has the same person bat and bowl.
+   */
+  private sideFor(rules: FormatRules, innings: { batting_team_id: string; bowling_team_id: string } | undefined, need: 'bat' | 'bowl'): string | null {
+    if (rules?.solo_batting?.enabled || !innings) return null;
+    return need === 'bat' ? innings.batting_team_id : innings.bowling_team_id;
   }
 
   private async batterCard(client: PoolClient, playerId: string) {
